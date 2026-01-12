@@ -57,9 +57,25 @@ function normalizeGender(val: any): GenderOption {
 }
 
 function normalizeQuestion(item: any): Question {
-  // Map various potential ID fields to 'id' (string)
-  const id = String(item.id ?? item.questionId ?? item.question_id ?? '');
-  const questionId = item.questionId ?? item.question_id ?? item.qid ?? id;
+  // CRITICAL: Always prioritize numeric 'id' field over question_id
+  // Backend should send: { id: 6, questionId: "Q5A", ... }
+  
+  let id: string;
+  
+  // Priority 1: Use numeric 'id' field (this is the DynamoDB Sort Key)
+  if (item.id != null && item.id !== '') {
+    id = String(item.id);  // "6", "7", "25" etc.
+  } 
+  // Priority 2: Fallback to question_id only if numeric id is missing
+  else if (item.question_id) {
+    id = String(item.question_id);  // "Q5A" as fallback
+  }
+  // Priority 3: Last resort
+  else {
+    id = String(item.questionId ?? '');
+  }
+  
+  const questionId = item.questionId ?? item.question_id ?? item.qid ?? '';
   const text = item.text ?? item.question_text ?? item.questionText ?? item.question ?? item.body ?? '';
   const order = toNumber(item.order ?? item.displayOrder ?? item.sort, 0);
   const category = String(item.category ?? item.phase ?? item.phaseName ?? 'Uncategorized');
@@ -88,11 +104,10 @@ function normalizeQuestion(item: any): Question {
     }
   }
 
-  // Default fallback
   if (!Array.isArray(applicableFor) || applicableFor.length === 0) {
     applicableFor = ['All Genders'];
   }
-  applicableFor = Array.from(new Set(applicableFor)); // Deduplicate
+  applicableFor = Array.from(new Set(applicableFor));
 
   return { id, questionId, text, order, category, applicableFor };
 }
@@ -160,7 +175,27 @@ const ManageOnboarding: React.FC = () => {
           throw new Error(`Failed to fetch questions: ${res.status}`);
         }
         const data = await res.json();
+        
+        // 🔍 DEBUG: Check backend response
+        console.group('🔍 Backend Response Debug');
+        console.log('Raw data:', data);
+        if (data.questions && data.questions.length > 0) {
+          console.log('First item from backend:', data.questions[0]);
+        } else if (Array.isArray(data) && data.length > 0) {
+          console.log('First item from backend:', data[0]);
+        }
+        console.groupEnd();
+        
         const normalized = normalizeArray(data);
+        
+        // 🔍 DEBUG: Check normalized data
+        console.group('🔍 Normalized Data Debug');
+        if (normalized.length > 0) {
+          console.log('First normalized item:', normalized[0]);
+          console.log('Item IDs (first 5):', normalized.slice(0, 5).map(q => ({ id: q.id, questionId: q.questionId })));
+        }
+        console.groupEnd();
+        
         setQuestions(normalized);
       } catch (err) {
         console.error('Error loading questions:', err);
@@ -274,8 +309,6 @@ const ManageOnboarding: React.FC = () => {
     }
 
     // -- 1. Calculate New Order FIRST (Synchronously) --
-    // We calculate the new state here to ensure the payload is correct
-    // before we even update the React state.
     const currentQuestions = [...questions];
     const fromIndex = currentQuestions.findIndex((q) => q.id === draggedId);
     const toIndex = currentQuestions.findIndex((q) => q.id === targetId);
@@ -289,29 +322,30 @@ const ManageOnboarding: React.FC = () => {
     const [moved] = currentQuestions.splice(fromIndex, 1);
     currentQuestions.splice(toIndex, 0, moved);
 
-    // Assign new order numbers (optimistic)
+    // Assign new order numbers
     const reorderedList = currentQuestions.map((q, i) => ({ ...q, order: i + 1 }));
 
     // -- 2. Optimistic Update --
     const previousState = [...questions];
-    setQuestions(reorderedList); // Update UI immediately
+    setQuestions(reorderedList);
 
     setDraggedId(null);
     setSavingReorder(true);
     setError(null);
 
     try {
-      // -- 3. Send Payload --
+      // -- 3. Send Payload with numeric IDs --
       const payload = {
         questions: reorderedList.map((q) => ({
-          id: q.id,
-          questionId: q.questionId ?? q.id,
+          id: q.id,  // This should be numeric like "6", "7"
+          questionId: q.questionId || q.id,
         })),
       };
 
       // 🔍 DEBUG LOGGING
       console.group('🚀 Reorder Request Debug');
       console.log('Payload:', JSON.stringify(payload, null, 2));
+      console.log('First 3 IDs being sent:', payload.questions.slice(0, 3).map(q => q.id));
       
       if (payload.questions.length === 0) {
           throw new Error("Client Error: Attempting to send empty questions list!");
@@ -333,6 +367,7 @@ const ManageOnboarding: React.FC = () => {
                 const errorJson = JSON.parse(errorText);
                 if (errorJson.error) errMsg = errorJson.error;
                 else if (errorJson.message) errMsg = errorJson.message;
+                else if (errorJson.details) errMsg = errorJson.details;
             } catch {
                 if (errorText.length < 200) errMsg = errorText; 
             }
@@ -511,6 +546,10 @@ const ManageOnboarding: React.FC = () => {
                   <div className="question-main">
                     <div className="question-text">{q.text || 'Untitled question'}</div>
                     <div className="question-meta-row">
+                      <span className="question-meta-label">ID:</span>
+                      <span className="pill" style={{ backgroundColor: '#e3f2fd', color: '#1976d2', marginRight: 8 }}>{q.id}</span>
+                      <span className="question-meta-label">QID:</span>
+                      <span className="pill" style={{ backgroundColor: '#f3e5f5', color: '#7b1fa2', marginRight: 12 }}>{q.questionId}</span>
                       <span className="question-meta-label">Category:</span>
                       <span className="pill pill-category">{q.category || 'Uncategorized'}</span>
                       <span className="question-meta-label" style={{ marginLeft: 12 }}>For:</span>
