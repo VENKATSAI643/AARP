@@ -248,7 +248,6 @@ const ManageOnboarding: React.FC = () => {
   const handleDragStart = (e: React.DragEvent<HTMLLIElement>, id: string) => {
     setDraggedId(id);
     e.dataTransfer.effectAllowed = 'move';
-    // Firefox requires data to be set
     e.dataTransfer.setData('text/plain', id);
     if (e.currentTarget) {
       e.currentTarget.style.opacity = '0.5';
@@ -274,34 +273,37 @@ const ManageOnboarding: React.FC = () => {
       return;
     }
 
-    // 1. Optimistic Update
-    let previousState: Question[] = [];
-    let updatedSnapshot: Question[] = [];
-
-    setQuestions((prev) => {
-      previousState = [...prev];
-      const clone = [...prev];
-      const fromIndex = clone.findIndex((q) => q.id === draggedId);
-      const toIndex = clone.findIndex((q) => q.id === targetId);
+    // -- 1. Calculate New Order FIRST (Synchronously) --
+    // We calculate the new state here to ensure the payload is correct
+    // before we even update the React state.
+    const currentQuestions = [...questions];
+    const fromIndex = currentQuestions.findIndex((q) => q.id === draggedId);
+    const toIndex = currentQuestions.findIndex((q) => q.id === targetId);
       
-      if (fromIndex === -1 || toIndex === -1) return prev;
+    if (fromIndex === -1 || toIndex === -1) {
+        console.error("Could not find indices for drag/drop");
+        return;
+    }
 
-      const [moved] = clone.splice(fromIndex, 1);
-      clone.splice(toIndex, 0, moved);
+    // Move the item locally
+    const [moved] = currentQuestions.splice(fromIndex, 1);
+    currentQuestions.splice(toIndex, 0, moved);
 
-      // Update order property locally for UI consistency
-      const reord = clone.map((q, i) => ({ ...q, order: i + 1 }));
-      updatedSnapshot = reord;
-      return reord;
-    });
+    // Assign new order numbers (optimistic)
+    const reorderedList = currentQuestions.map((q, i) => ({ ...q, order: i + 1 }));
+
+    // -- 2. Optimistic Update --
+    const previousState = [...questions];
+    setQuestions(reorderedList); // Update UI immediately
 
     setDraggedId(null);
     setSavingReorder(true);
     setError(null);
 
     try {
+      // -- 3. Send Payload --
       const payload = {
-        questions: updatedSnapshot.map((q) => ({
+        questions: reorderedList.map((q) => ({
           id: q.id,
           questionId: q.questionId ?? q.id,
         })),
@@ -309,13 +311,10 @@ const ManageOnboarding: React.FC = () => {
 
       // 🔍 DEBUG LOGGING
       console.group('🚀 Reorder Request Debug');
-      console.log('Target URL:', `${API_BASE}/admin/questions/reorder`);
       console.log('Payload:', JSON.stringify(payload, null, 2));
       
-      // Check for potential data issues
-      const invalidItems = payload.questions.filter(q => !q.id || q.id === 'undefined');
-      if (invalidItems.length > 0) {
-        console.error('⚠️ WARNING: Payload contains items with missing/invalid IDs:', invalidItems);
+      if (payload.questions.length === 0) {
+          throw new Error("Client Error: Attempting to send empty questions list!");
       }
       console.groupEnd();
 
@@ -338,14 +337,13 @@ const ManageOnboarding: React.FC = () => {
                 if (errorText.length < 200) errMsg = errorText; 
             }
         } catch {}
-        
         throw new Error(errMsg);
       }
 
       const result = await res.json();
       console.log('✅ Backend Success Response:', result);
       
-      // 2. Sync with Backend Response
+      // Update with server-verified data
       if (result && (Array.isArray(result) || Array.isArray(result.questions))) {
         setQuestions(normalizeArray(result));
       }
@@ -353,7 +351,7 @@ const ManageOnboarding: React.FC = () => {
       setSuccessMessage('✅ Questions reordered successfully!');
     } catch (err) {
       console.error('❌ Error reordering:', err);
-      // 3. Rollback on Error
+      // Rollback
       setQuestions(previousState);
       setError(err instanceof Error ? err.message : 'Failed to reorder questions');
     } finally {
