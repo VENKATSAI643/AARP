@@ -2,37 +2,18 @@ import React, { useEffect, useState } from 'react';
 import QuestionForm from '../components/QuestionForm';
 import type { NewQuestion } from '../components/QuestionForm';
 
-declare global {
-  interface ImportMetaEnv {
-    readonly VITE_API_BASE?: string;
-  }
-  interface ImportMeta {
-    readonly env: ImportMetaEnv;
-  }
+// ✅ Only get from environment variable - NO fallback URLs
+const API_BASE = import.meta.env.VITE_API_BASE;
+
+// Validate that API_BASE is set
+if (!API_BASE) {
+  throw new Error(
+    'VITE_API_BASE environment variable is not set. Please add it to your .env file.'
+  );
 }
 
-function resolveApiBase(): string {
-  try {
-    const v = (import.meta as any)?.env?.VITE_API_BASE;
-    if (v) return String(v);
-  } catch {
-    // ignore
-  }
-
-  const g: any = globalThis as any;
-  if (g?.process?.env?.REACT_APP_API_BASE) return String(g.process.env.REACT_APP_API_BASE);
-  if (g?.__REACT_APP_API_BASE) return String(g.__REACT_APP_API_BASE);
-  if (g?.__ENV?.REACT_APP_API_BASE) return String(g.__ENV.REACT_APP_API_BASE);
-  if (g?.__ENV?.VITE_API_BASE) return String(g.__ENV.VITE_API_BASE);
-
-  return 'https://5ep59flti9.execute-api.us-east-1.amazonaws.com/dev/api/v1';
-}
-
-const API_BASE = resolveApiBase();
-
-// ✅ FIXED: id is now string (Q1, Q2, Q3...)
 export interface Question extends NewQuestion {
-  id: string;  // Changed from number to string
+  id: string;
   order: number;
   questionId?: string;
   category: string;
@@ -76,9 +57,7 @@ function normalizeGender(val: any): GenderOption {
   return 'All Genders';
 }
 
-// ✅ FIXED: Keep id as string
 function normalizeQuestion(item: any): Question {
-  // Backend returns id as string (Q1, Q2, Q3...)
   const id = String(item.id ?? item.questionId ?? item.question_id ?? '');
   const questionId = item.questionId ?? item.question_id ?? item.qid ?? id;
   
@@ -92,7 +71,6 @@ function normalizeQuestion(item: any): Question {
   
   const order = toNumber(item.order ?? item.displayOrder ?? item.sort, 0);
 
-  // Backend returns 'category' and 'phase' - use either
   const category = String(item.category ?? item.phase ?? item.phaseName ?? 'Uncategorized');
 
   let applicableFor: GenderOption[] = [];
@@ -149,7 +127,6 @@ function normalizeArray(payload: any): Question[] {
   const normalized = arr.map(normalizeQuestion);
   normalized.sort((a, b) => {
     if (a.order !== b.order) return a.order - b.order;
-    // Fallback: compare id strings
     return a.id.localeCompare(b.id);
   });
   return normalized;
@@ -158,8 +135,8 @@ function normalizeArray(payload: any): Question[] {
 const ManageOnboarding: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [draggedId, setDraggedId] = useState<string | null>(null);  // ✅ Changed to string
-  const [editingId, setEditingId] = useState<string | null>(null);  // ✅ Changed to string
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editInitialData, setEditInitialData] = useState<NewQuestion | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingReorder, setSavingReorder] = useState(false);
@@ -184,9 +161,7 @@ const ManageOnboarding: React.FC = () => {
           return;
         }
         const data = await res.json();
-        console.log('Backend response:', data); // Debug log
         const normalized = normalizeArray(data);
-        console.log('Normalized questions:', normalized); // Debug log
         setQuestions(normalized);
       } catch (err) {
         console.error('Error loading questions:', err);
@@ -200,7 +175,6 @@ const ManageOnboarding: React.FC = () => {
   const handleSaveQuestion = async (data: NewQuestion) => {
     try {
       if (editingId !== null) {
-        // UPDATE
         const res = await fetch(`${API_BASE}/admin/questions/${editingId}`, {
           method: 'PUT',
           headers: getAuthHeaders(),
@@ -222,7 +196,6 @@ const ManageOnboarding: React.FC = () => {
         return;
       }
 
-      // ADD
       const res = await fetch(`${API_BASE}/admin/questions`, {
         method: 'POST',
         headers: getAuthHeaders(),
@@ -255,7 +228,6 @@ const ManageOnboarding: React.FC = () => {
     setEditInitialData(null);
   };
 
-  // ✅ FIXED: id is now string
   const handleDragStart = (id: string) => {
     setDraggedId(id);
   };
@@ -289,7 +261,7 @@ const ManageOnboarding: React.FC = () => {
     try {
       const payload = {
         questions: updatedSnapshot.map((q) => ({
-          id: q.id,  // Now sends string (Q1, Q2, Q3...)
+          id: q.id,
           questionId: q.questionId ?? q.id,
         })),
       };
