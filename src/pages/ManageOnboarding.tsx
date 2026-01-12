@@ -134,28 +134,18 @@ const ManageOnboarding: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [draggedId, setDraggedId] = useState<string | null>(null);
-  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null); // ✅ Added for visual feedback
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editInitialData, setEditInitialData] = useState<NewQuestion | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingReorder, setSavingReorder] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null); // ✅ Track deleting state
-  const [successMessage, setSuccessMessage] = useState<string | null>(null); // ✅ Success messages
+  const [error, setError] = useState<string | null>(null); // ✅ Added error state
 
   const handleAddQuestionClick = () => {
     setEditingId(null);
     setEditInitialData(null);
     setShowForm(true);
   };
-
-  // ✅ Auto-hide success message after 3 seconds
-  useEffect(() => {
-    if (successMessage) {
-      const timer = setTimeout(() => setSuccessMessage(null), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [successMessage]);
 
   useEffect(() => {
     const loadQuestions = async () => {
@@ -205,7 +195,6 @@ const ManageOnboarding: React.FC = () => {
         setEditingId(null);
         setEditInitialData(null);
         setShowForm(false);
-        setSuccessMessage(`✅ Question ${editingId} updated successfully!`);
         return;
       }
 
@@ -230,7 +219,6 @@ const ManageOnboarding: React.FC = () => {
       });
 
       setShowForm(false);
-      setSuccessMessage(`✅ Question ${created.id} added successfully!`);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'Failed to save question');
@@ -243,9 +231,11 @@ const ManageOnboarding: React.FC = () => {
     setEditInitialData(null);
   };
 
+  // ✅ Improved drag handlers
   const handleDragStart = (e: React.DragEvent<HTMLLIElement>, id: string) => {
     setDraggedId(id);
     e.dataTransfer.effectAllowed = 'move';
+    // Add ghost image styling
     if (e.currentTarget) {
       e.currentTarget.style.opacity = '0.5';
     }
@@ -274,16 +264,18 @@ const ManageOnboarding: React.FC = () => {
     let previousState: Question[] = [];
 
     setQuestions((prev) => {
-      previousState = [...prev];
+      previousState = [...prev]; // Save for rollback
       const clone = [...prev];
       const fromIndex = clone.findIndex((q) => q.id === draggedId);
       const toIndex = clone.findIndex((q) => q.id === targetId);
       
       if (fromIndex === -1 || toIndex === -1) return prev;
 
+      // Perform the reorder
       const [moved] = clone.splice(fromIndex, 1);
       clone.splice(toIndex, 0, moved);
 
+      // Update order numbers
       const reord = clone.map((q, i) => ({ ...q, order: i + 1 }));
       updatedSnapshot = reord;
       return reord;
@@ -301,6 +293,8 @@ const ManageOnboarding: React.FC = () => {
         })),
       };
 
+      console.log('🔄 Sending reorder request:', payload);
+
       const res = await fetch(`${API_BASE}/admin/questions/reorder`, {
         method: 'PUT',
         headers: getAuthHeaders(),
@@ -313,17 +307,20 @@ const ManageOnboarding: React.FC = () => {
       }
 
       const result = await res.json();
+      console.log('✅ Reorder successful:', result);
 
+      // Update with server response if available
       if (result && (Array.isArray(result) || Array.isArray(result.questions))) {
         setQuestions(normalizeArray(result));
       }
-      
-      setSuccessMessage('✅ Questions reordered successfully!');
     } catch (err) {
       console.error('❌ Error reordering:', err);
+      
+      // Rollback to previous state
       setQuestions(previousState);
       setError(err instanceof Error ? err.message : 'Failed to reorder questions');
 
+      // Try to refetch as fallback
       try {
         const refetch = await fetch(`${API_BASE}/admin/questions`, {
           method: 'GET',
@@ -362,62 +359,33 @@ const ManageOnboarding: React.FC = () => {
     setShowForm(true);
   };
 
-  // ✅ Enhanced delete with better UX
   const handleDelete = async (id: string) => {
-    // Find question for confirmation message
-    const question = questions.find((q) => q.id === id);
-    const questionText = question?.text || id;
-    const truncatedText = questionText.length > 50 
-      ? questionText.substring(0, 50) + '...' 
-      : questionText;
-
-    if (!confirm(`Are you sure you want to delete this question?\n\n"${truncatedText}"\n\nThis action cannot be undone.`)) {
-      return;
-    }
-
-    // ✅ Prevent double-click
-    if (deletingId) {
-      console.log('Delete already in progress');
+    if (!confirm('Are you sure you want to delete this question?')) {
       return;
     }
 
     try {
       setError(null);
-      setDeletingId(id); // ✅ Set deleting state
-
-      console.log(`🗑️ Deleting question: ${id}`);
-
       const res = await fetch(`${API_BASE}/admin/questions/${id}`, {
         method: 'DELETE',
         headers: getAuthHeaders(),
       });
 
-      console.log(`Delete response status: ${res.status}`);
-
-      // ✅ Handle both 204 (No Content) and 200 (OK)
       if (!res.ok && res.status !== 204) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || `Delete failed: ${res.status}`);
       }
 
-      console.log(`✅ Question ${id} deleted successfully`);
-
-      // ✅ Remove from state
       setQuestions((prev) => prev.filter((q) => q.id !== id));
 
-      // ✅ Close form if deleting currently edited question
       if (editingId === id) {
         setEditingId(null);
         setEditInitialData(null);
         setShowForm(false);
       }
-
-      setSuccessMessage(`✅ Question ${id} deleted successfully!`);
     } catch (err) {
-      console.error('❌ Error deleting question:', err);
+      console.error('Error deleting question:', err);
       setError(err instanceof Error ? err.message : 'Failed to delete question');
-    } finally {
-      setDeletingId(null); // ✅ Clear deleting state
     }
   };
 
@@ -434,35 +402,6 @@ const ManageOnboarding: React.FC = () => {
         </button>
         {savingReorder && <span style={{ marginLeft: 12, color: '#0066cc' }}>💾 Saving order…</span>}
       </section>
-
-      {/* ✅ Success Banner */}
-      {successMessage && (
-        <section className="card card-success" style={{ 
-          backgroundColor: '#d4edda', 
-          border: '1px solid #28a745',
-          padding: '12px 16px',
-          marginBottom: '16px',
-          borderRadius: '8px'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '20px' }}>✅</span>
-            <span style={{ color: '#155724' }}>{successMessage}</span>
-            <button 
-              onClick={() => setSuccessMessage(null)}
-              style={{ 
-                marginLeft: 'auto', 
-                background: 'none', 
-                border: 'none', 
-                cursor: 'pointer',
-                fontSize: '18px',
-                color: '#155724'
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        </section>
-      )}
 
       {/* ✅ Error Banner */}
       {error && (
@@ -530,19 +469,17 @@ const ManageOnboarding: React.FC = () => {
                     draggedId === q.id ? 'is-dragging' : ''
                   } ${
                     dragOverId === q.id ? 'drag-over' : ''
-                  } ${
-                    deletingId === q.id ? 'deleting' : ''
                   }`}
-                  draggable={!deletingId}
+                  draggable
                   onDragStart={(e) => handleDragStart(e, q.id)}
                   onDragOver={(e) => handleDragOver(e, q.id)}
                   onDragLeave={handleDragLeave}
                   onDrop={(e) => handleDrop(e, q.id)}
                   onDragEnd={handleDragEnd}
                   style={{
-                    cursor: deletingId === q.id ? 'not-allowed' : 'grab',
+                    cursor: 'grab',
                     transition: 'all 0.2s ease',
-                    opacity: draggedId === q.id ? 0.5 : deletingId === q.id ? 0.6 : 1,
+                    opacity: draggedId === q.id ? 0.5 : 1,
                   }}
                 >
                   <div className="question-index-circle">{index + 1}</div>
@@ -573,21 +510,11 @@ const ManageOnboarding: React.FC = () => {
                   </div>
 
                   <div className="question-actions">
-                    <button 
-                      type="button" 
-                      className="btn btn-edit" 
-                      onClick={() => handleEdit(q.id)}
-                      disabled={!!deletingId}
-                    >
+                    <button type="button" className="btn btn-edit" onClick={() => handleEdit(q.id)}>
                       ✏️ Edit
                     </button>
-                    <button 
-                      type="button" 
-                      className="btn btn-delete" 
-                      onClick={() => handleDelete(q.id)}
-                      disabled={!!deletingId}
-                    >
-                      {deletingId === q.id ? '⏳ Deleting...' : '🗑️ Delete'}
+                    <button type="button" className="btn btn-delete" onClick={() => handleDelete(q.id)}>
+                      🗑️ Delete
                     </button>
                   </div>
                 </li>
