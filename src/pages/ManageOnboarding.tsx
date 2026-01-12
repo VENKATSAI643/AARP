@@ -40,39 +40,24 @@ const KNOWN_GENDERS = ['Male', 'Female', 'Non-binary', 'All Genders'] as const;
 function normalizeGender(val: any): GenderOption {
   if (val === null || val === undefined) return 'All Genders';
   const s = String(val).trim();
-
   if (!s) return 'All Genders';
-
   const lower = s.toLowerCase();
-
   if (lower === 'm' || lower === 'male' || lower.includes('male')) return 'Male';
   if (lower === 'f' || lower === 'female' || lower.includes('female')) return 'Female';
   if (lower.includes('non') || lower.includes('nonbinary') || lower.includes('non-binary')) return 'Non-binary';
   if (lower.includes('all')) return 'All Genders';
-
   if ((KNOWN_GENDERS as readonly string[]).includes(s)) return s as GenderOption;
-
   return 'All Genders';
 }
 
 function normalizeQuestion(item: any): Question {
   const id = String(item.id ?? item.questionId ?? item.question_id ?? '');
   const questionId = item.questionId ?? item.question_id ?? item.qid ?? id;
-  
-  const text =
-    item.text ??
-    item.question_text ??
-    item.questionText ??
-    item.question ??
-    item.body ??
-    '';
-  
+  const text = item.text ?? item.question_text ?? item.questionText ?? item.question ?? item.body ?? '';
   const order = toNumber(item.order ?? item.displayOrder ?? item.sort, 0);
-
   const category = String(item.category ?? item.phase ?? item.phaseName ?? 'Uncategorized');
 
   let applicableFor: GenderOption[] = [];
-
   if (Array.isArray(item.applicableFor)) {
     applicableFor = item.applicableFor.map(normalizeGender);
   } else if (Array.isArray(item.applicable_for)) {
@@ -103,17 +88,9 @@ function normalizeQuestion(item: any): Question {
   if (!Array.isArray(applicableFor) || applicableFor.length === 0) {
     applicableFor = ['All Genders'];
   }
-
   applicableFor = Array.from(new Set(applicableFor));
 
-  return {
-    id,
-    questionId,
-    text,
-    order,
-    category,
-    applicableFor,
-  };
+  return { id, questionId, text, order, category, applicableFor };
 }
 
 function normalizeArray(payload: any): Question[] {
@@ -134,18 +111,27 @@ const ManageOnboarding: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [draggedId, setDraggedId] = useState<string | null>(null);
-  const [dragOverId, setDragOverId] = useState<string | null>(null); // ✅ Added for visual feedback
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editInitialData, setEditInitialData] = useState<NewQuestion | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingReorder, setSavingReorder] = useState(false);
-  const [error, setError] = useState<string | null>(null); // ✅ Added error state
+  const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const handleAddQuestionClick = () => {
     setEditingId(null);
     setEditInitialData(null);
     setShowForm(true);
   };
+
+  useEffect(() => {
+    if (successMessage) {
+      const timer = setTimeout(() => setSuccessMessage(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMessage]);
 
   useEffect(() => {
     const loadQuestions = async () => {
@@ -176,11 +162,21 @@ const ManageOnboarding: React.FC = () => {
     try {
       setError(null);
 
+      // ✅ FIX: Explicitly map 'category' key for backend
+      // Backend expects: { text, category, applicableFor }
+      const payload = {
+        text: data.text,
+        category: data.category, // Maps to 'phase' column in DB
+        applicableFor: data.applicableFor
+      };
+
+      console.log('Sending payload:', payload);
+
       if (editingId !== null) {
         const res = await fetch(`${API_BASE}/admin/questions/${editingId}`, {
           method: 'PUT',
           headers: getAuthHeaders(),
-          body: JSON.stringify(data),
+          body: JSON.stringify(payload),
         });
 
         if (!res.ok) {
@@ -195,13 +191,14 @@ const ManageOnboarding: React.FC = () => {
         setEditingId(null);
         setEditInitialData(null);
         setShowForm(false);
+        setSuccessMessage(`✅ Question ${editingId} updated successfully!`);
         return;
       }
 
       const res = await fetch(`${API_BASE}/admin/questions`, {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify(data),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -219,6 +216,7 @@ const ManageOnboarding: React.FC = () => {
       });
 
       setShowForm(false);
+      setSuccessMessage(`✅ Question ${created.id} added successfully!`);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'Failed to save question');
@@ -231,11 +229,9 @@ const ManageOnboarding: React.FC = () => {
     setEditInitialData(null);
   };
 
-  // ✅ Improved drag handlers
   const handleDragStart = (e: React.DragEvent<HTMLLIElement>, id: string) => {
     setDraggedId(id);
     e.dataTransfer.effectAllowed = 'move';
-    // Add ghost image styling
     if (e.currentTarget) {
       e.currentTarget.style.opacity = '0.5';
     }
@@ -264,18 +260,16 @@ const ManageOnboarding: React.FC = () => {
     let previousState: Question[] = [];
 
     setQuestions((prev) => {
-      previousState = [...prev]; // Save for rollback
+      previousState = [...prev];
       const clone = [...prev];
       const fromIndex = clone.findIndex((q) => q.id === draggedId);
       const toIndex = clone.findIndex((q) => q.id === targetId);
       
       if (fromIndex === -1 || toIndex === -1) return prev;
 
-      // Perform the reorder
       const [moved] = clone.splice(fromIndex, 1);
       clone.splice(toIndex, 0, moved);
 
-      // Update order numbers
       const reord = clone.map((q, i) => ({ ...q, order: i + 1 }));
       updatedSnapshot = reord;
       return reord;
@@ -293,8 +287,6 @@ const ManageOnboarding: React.FC = () => {
         })),
       };
 
-      console.log('🔄 Sending reorder request:', payload);
-
       const res = await fetch(`${API_BASE}/admin/questions/reorder`, {
         method: 'PUT',
         headers: getAuthHeaders(),
@@ -307,20 +299,15 @@ const ManageOnboarding: React.FC = () => {
       }
 
       const result = await res.json();
-      console.log('✅ Reorder successful:', result);
-
-      // Update with server response if available
       if (result && (Array.isArray(result) || Array.isArray(result.questions))) {
         setQuestions(normalizeArray(result));
       }
+      setSuccessMessage('✅ Questions reordered successfully!');
     } catch (err) {
       console.error('❌ Error reordering:', err);
-      
-      // Rollback to previous state
       setQuestions(previousState);
       setError(err instanceof Error ? err.message : 'Failed to reorder questions');
 
-      // Try to refetch as fallback
       try {
         const refetch = await fetch(`${API_BASE}/admin/questions`, {
           method: 'GET',
@@ -331,7 +318,7 @@ const ManageOnboarding: React.FC = () => {
           setQuestions(normalizeArray(data));
         }
       } catch (refetchErr) {
-        console.error('Failed to refetch after reorder error', refetchErr);
+        console.error('Refetch failed', refetchErr);
       }
     } finally {
       setSavingReorder(false);
@@ -351,21 +338,33 @@ const ManageOnboarding: React.FC = () => {
     if (!q) return;
 
     setEditingId(id);
+    // ✅ Initialize form with correct 'category' from question data
     setEditInitialData({
       text: q.text,
-      category: q.category,
+      category: q.category, 
       applicableFor: q.applicableFor,
     });
     setShowForm(true);
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this question?')) {
+    const question = questions.find((q) => q.id === id);
+    const questionText = question?.text || id;
+    const truncatedText = questionText.length > 50 
+      ? questionText.substring(0, 50) + '...' 
+      : questionText;
+
+    if (!confirm(`Are you sure you want to delete this question?\n\n"${truncatedText}"\n\nThis action cannot be undone.`)) {
       return;
     }
 
+    if (deletingId) return;
+
     try {
       setError(null);
+      setDeletingId(id);
+      console.log(`🗑️ Deleting question: ${id}`);
+
       const res = await fetch(`${API_BASE}/admin/questions/${id}`, {
         method: 'DELETE',
         headers: getAuthHeaders(),
@@ -383,9 +382,13 @@ const ManageOnboarding: React.FC = () => {
         setEditInitialData(null);
         setShowForm(false);
       }
+
+      setSuccessMessage(`✅ Question ${id} deleted successfully!`);
     } catch (err) {
-      console.error('Error deleting question:', err);
+      console.error('❌ Error deleting question:', err);
       setError(err instanceof Error ? err.message : 'Failed to delete question');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -403,30 +406,22 @@ const ManageOnboarding: React.FC = () => {
         {savingReorder && <span style={{ marginLeft: 12, color: '#0066cc' }}>💾 Saving order…</span>}
       </section>
 
-      {/* ✅ Error Banner */}
+      {successMessage && (
+        <section className="card card-success" style={{ backgroundColor: '#d4edda', border: '1px solid #28a745', padding: '12px 16px', marginBottom: '16px', borderRadius: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '20px' }}>✅</span>
+            <span style={{ color: '#155724' }}>{successMessage}</span>
+            <button onClick={() => setSuccessMessage(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', color: '#155724' }}>✕</button>
+          </div>
+        </section>
+      )}
+
       {error && (
-        <section className="card card-error" style={{ 
-          backgroundColor: '#fff3cd', 
-          border: '1px solid #ffc107',
-          padding: '12px 16px',
-          marginBottom: '16px',
-          borderRadius: '8px'
-        }}>
+        <section className="card card-error" style={{ backgroundColor: '#fff3cd', border: '1px solid #ffc107', padding: '12px 16px', marginBottom: '16px', borderRadius: '8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '20px' }}>⚠️</span>
             <span style={{ color: '#856404' }}>{error}</span>
-            <button 
-              onClick={() => setError(null)}
-              style={{ 
-                marginLeft: 'auto', 
-                background: 'none', 
-                border: 'none', 
-                cursor: 'pointer',
-                fontSize: '18px'
-              }}
-            >
-              ✕
-            </button>
+            <button onClick={() => setError(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px' }}>✕</button>
           </div>
         </section>
       )}
@@ -449,7 +444,6 @@ const ManageOnboarding: React.FC = () => {
             {questions.length} {questions.length === 1 ? 'Question' : 'Questions'}
           </span>
         </div>
-
         <p className="questions-hint">💡 Drag and drop questions to reorder them</p>
 
         <div className="questions-list">
@@ -465,36 +459,26 @@ const ManageOnboarding: React.FC = () => {
               {questions.map((q, index) => (
                 <li
                   key={q.id}
-                  className={`questions-li question-card ${
-                    draggedId === q.id ? 'is-dragging' : ''
-                  } ${
-                    dragOverId === q.id ? 'drag-over' : ''
-                  }`}
-                  draggable
+                  className={`questions-li question-card ${draggedId === q.id ? 'is-dragging' : ''} ${dragOverId === q.id ? 'drag-over' : ''} ${deletingId === q.id ? 'deleting' : ''}`}
+                  draggable={!deletingId}
                   onDragStart={(e) => handleDragStart(e, q.id)}
                   onDragOver={(e) => handleDragOver(e, q.id)}
                   onDragLeave={handleDragLeave}
                   onDrop={(e) => handleDrop(e, q.id)}
                   onDragEnd={handleDragEnd}
                   style={{
-                    cursor: 'grab',
+                    cursor: deletingId === q.id ? 'not-allowed' : 'grab',
                     transition: 'all 0.2s ease',
-                    opacity: draggedId === q.id ? 0.5 : 1,
+                    opacity: draggedId === q.id ? 0.5 : deletingId === q.id ? 0.6 : 1,
                   }}
                 >
                   <div className="question-index-circle">{index + 1}</div>
-
                   <div className="question-main">
                     <div className="question-text">{q.text || 'Untitled question'}</div>
-
                     <div className="question-meta-row">
                       <span className="question-meta-label">Category:</span>
                       <span className="pill pill-category">{q.category || 'Uncategorized'}</span>
-
-                      <span className="question-meta-label" style={{ marginLeft: 12 }}>
-                        For:
-                      </span>
-
+                      <span className="question-meta-label" style={{ marginLeft: 12 }}>For:</span>
                       <div className="question-gender-pills">
                         {q.applicableFor.map((g) => (
                           <span key={g} className="pill pill-gender" style={{ marginLeft: 6 }}>
@@ -508,14 +492,9 @@ const ManageOnboarding: React.FC = () => {
                       </div>
                     </div>
                   </div>
-
                   <div className="question-actions">
-                    <button type="button" className="btn btn-edit" onClick={() => handleEdit(q.id)}>
-                      ✏️ Edit
-                    </button>
-                    <button type="button" className="btn btn-delete" onClick={() => handleDelete(q.id)}>
-                      🗑️ Delete
-                    </button>
+                    <button type="button" className="btn btn-edit" onClick={() => handleEdit(q.id)} disabled={!!deletingId}>✏️ Edit</button>
+                    <button type="button" className="btn btn-delete" onClick={() => handleDelete(q.id)} disabled={!!deletingId}>{deletingId === q.id ? '⏳ Deleting...' : '🗑️ Delete'}</button>
                   </div>
                 </li>
               ))}
