@@ -2,17 +2,48 @@ import React, { useEffect, useState } from 'react';
 import QuestionForm from '../components/QuestionForm';
 import type { NewQuestion } from '../components/QuestionForm';
 
+/**
+ * Optional: Vite env typing for TS (keeps TS happy if you have this globally).
+ */
+declare global {
+  interface ImportMetaEnv {
+    readonly VITE_API_BASE?: string;
+  }
+  interface ImportMeta {
+    readonly env: ImportMetaEnv;
+  }
+}
+
+/** Safely resolve API base without referencing `process` or `import` as a value. */
+function resolveApiBase(): string {
+  // 1) Vite env via import.meta.env — wrapped in try/catch so editors without support won't crash.
+  try {
+    const v = (import.meta as any)?.env?.VITE_API_BASE;
+    if (v) return String(v);
+  } catch {
+    // import.meta may not be available in some analysis tools — ignore
+  }
+
+  // 2) Look for CRA-style env injected into globalThis (hosting solutions sometimes expose these)
+  const g: any = globalThis as any;
+  if (g?.process?.env?.REACT_APP_API_BASE) return String(g.process.env.REACT_APP_API_BASE);
+  if (g?.__REACT_APP_API_BASE) return String(g.__REACT_APP_API_BASE);
+  if (g?.__ENV?.REACT_APP_API_BASE) return String(g.__ENV.REACT_APP_API_BASE);
+  if (g?.__ENV?.VITE_API_BASE) return String(g.__ENV.VITE_API_BASE);
+
+  // 3) Final fallback (original hard-coded URL)
+  return 'https://5ep59flti9.execute-api.us-east-1.amazonaws.com/dev/api/v1';
+}
+
+const API_BASE = resolveApiBase();
+
 export interface Question extends NewQuestion {
   id: number;
   order: number;
   questionId?: string;
-  // Make category required to match NewQuestion contract
   category: string;
-  // Ensure applicableFor exactly matches NewQuestion's type
   applicableFor: NewQuestion['applicableFor'];
 }
-
-const API_BASE = 'https://5ep59flti9.execute-api.us-east-1.amazonaws.com/dev/api/v1';
 
 function getAuthHeaders() {
   const token = localStorage.getItem('accessToken') || '';
@@ -29,15 +60,10 @@ function toNumber(val: any, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-/**
- * Derive the GenderOption type from NewQuestion so we stay in sync with your form types.
- * This resolves the "string not assignable to GenderOption" compile errors.
- */
 type GenderOption = NewQuestion['applicableFor'][number];
 
 const KNOWN_GENDERS = ['Male', 'Female', 'Non-binary', 'All Genders'] as const;
 
-/** Normalize incoming strings/values into a valid GenderOption */
 function normalizeGender(val: any): GenderOption {
   if (val === null || val === undefined) return 'All Genders';
   const s = String(val).trim();
@@ -46,16 +72,13 @@ function normalizeGender(val: any): GenderOption {
 
   const lower = s.toLowerCase();
 
-  // common variations mapping
   if (lower === 'm' || lower === 'male' || lower.includes('male')) return 'Male';
   if (lower === 'f' || lower === 'female' || lower.includes('female')) return 'Female';
   if (lower.includes('non') || lower.includes('nonbinary') || lower.includes('non-binary')) return 'Non-binary';
   if (lower.includes('all')) return 'All Genders';
 
-  // If it's already one of known genders (case-sensitive check)
   if ((KNOWN_GENDERS as readonly string[]).includes(s)) return s as GenderOption;
 
-  // fallback: prefer 'All Genders' instead of an arbitrary string
   return 'All Genders';
 }
 
@@ -71,10 +94,8 @@ function normalizeQuestion(item: any): Question {
     '';
   const order = toNumber(item.order ?? item.displayOrder ?? item.sort ?? 0);
 
-  // ensure we always produce a string category
   const category = String(item.phase ?? item.phaseName ?? item.category ?? 'Uncategorized');
 
-  // ensure applicableFor exactly matches NewQuestion['applicableFor'] (i.e., GenderOption[])
   let applicableFor: GenderOption[] = [];
 
   if (Array.isArray(item.applicableFor)) {
@@ -82,7 +103,6 @@ function normalizeQuestion(item: any): Question {
   } else if (Array.isArray(item.applicable_for)) {
     applicableFor = item.applicable_for.map(normalizeGender);
   } else if (typeof item.applicableFor === 'string') {
-    // try parse JSON string (e.g. '["Male","Female"]') or treat as single value
     try {
       const parsed = JSON.parse(item.applicableFor);
       if (Array.isArray(parsed)) {
@@ -91,7 +111,6 @@ function normalizeQuestion(item: any): Question {
         applicableFor = [normalizeGender(parsed)];
       }
     } catch {
-      // not JSON: treat as a single comma-separated or single value
       if (item.applicableFor.includes(',')) {
         applicableFor = item.applicableFor.split(',').map((s: string) => normalizeGender(s));
       } else {
@@ -107,11 +126,9 @@ function normalizeQuestion(item: any): Question {
   }
 
   if (!Array.isArray(applicableFor) || applicableFor.length === 0) {
-    // default fallback
     applicableFor = ['All Genders'];
   }
 
-  // Ensure uniqueness and stable ordering
   applicableFor = Array.from(new Set(applicableFor));
 
   return {
@@ -180,7 +197,6 @@ const ManageOnboarding: React.FC = () => {
 
   const handleSaveQuestion = async (data: NewQuestion) => {
     try {
-      // EDIT MODE
       if (editingId !== null) {
         const res = await fetch(`${API_BASE}/admin/questions/${editingId}`, {
           method: 'PUT',
@@ -203,7 +219,6 @@ const ManageOnboarding: React.FC = () => {
         return;
       }
 
-      // ADD MODE
       const res = await fetch(`${API_BASE}/admin/questions`, {
         method: 'POST',
         headers: getAuthHeaders(),
@@ -250,7 +265,6 @@ const ManageOnboarding: React.FC = () => {
 
     let updatedSnapshot: Question[] = [];
 
-    // optimistic local reorder
     setQuestions((prev) => {
       const clone = [...prev];
       const fromIndex = clone.findIndex((q) => q.id === draggedId);
@@ -276,7 +290,6 @@ const ManageOnboarding: React.FC = () => {
         })),
       };
 
-      // prefer the explicit reorder route defined in your OpenAPI
       const res = await fetch(`${API_BASE}/admin/questions/reorder`, {
         method: 'PUT',
         headers: getAuthHeaders(),
@@ -285,7 +298,6 @@ const ManageOnboarding: React.FC = () => {
 
       if (!res.ok) {
         console.error('Failed to reorder questions on server', res.status);
-        // fallback: refetch server copy to restore consistency
         const refetch = await fetch(`${API_BASE}/admin/questions`, {
           method: 'GET',
           headers: getAuthHeaders(),
@@ -298,15 +310,11 @@ const ManageOnboarding: React.FC = () => {
       }
 
       const result = await res.json();
-      // If server replies with updated list, sync it
       if (result && (Array.isArray(result) || Array.isArray(result.questions))) {
         setQuestions(normalizeArray(result));
-      } else {
-        // Otherwise keep optimistic state (already applied)
       }
     } catch (err) {
       console.error('Error calling reorder API:', err);
-      // refetch as safe fallback
       try {
         const refetch = await fetch(`${API_BASE}/admin/questions`, {
           method: 'GET',
@@ -333,7 +341,6 @@ const ManageOnboarding: React.FC = () => {
     if (!q) return;
 
     setEditingId(id);
-    // q.category is now guaranteed to be a string and applicableFor matches NewQuestion
     setEditInitialData({
       text: q.text,
       category: q.category,
@@ -368,13 +375,11 @@ const ManageOnboarding: React.FC = () => {
 
   return (
     <div className="page-wrapper">
-      {/* Page title card */}
       <section className="card card-page-header">
         <h1 className="page-title">Manage Onboarding Questions</h1>
         <p className="page-subtitle">Add and reorder questions for the AI chatbot.</p>
       </section>
 
-      {/* Add Question toolbar */}
       <section className="card card-toolbar">
         <button className="btn-add-question" onClick={handleAddQuestionClick}>
           + Add New Question
@@ -382,7 +387,6 @@ const ManageOnboarding: React.FC = () => {
         {savingReorder && <span style={{ marginLeft: 12 }}>Saving order…</span>}
       </section>
 
-      {/* Form appears directly below the red bar */}
       {showForm && (
         <section className="card card-add-form">
           <QuestionForm
@@ -394,7 +398,6 @@ const ManageOnboarding: React.FC = () => {
         </section>
       )}
 
-      {/* Questions list container */}
       <section className="card card-content">
         <div className="questions-header">
           <h2 className="questions-title">Questions List</h2>
@@ -422,10 +425,8 @@ const ManageOnboarding: React.FC = () => {
                   onDrop={() => handleDrop(q.id)}
                   onDragEnd={handleDragEnd}
                 >
-                  {/* Number circle */}
                   <div className="question-index-circle">{index + 1}</div>
 
-                  {/* Main content */}
                   <div className="question-main">
                     <div className="question-text">{q.text || 'Untitled question'}</div>
 
@@ -451,7 +452,6 @@ const ManageOnboarding: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Actions */}
                   <div className="question-actions">
                     <button type="button" className="btn btn-edit" onClick={() => handleEdit(q.id)}>
                       ✏️ Edit
