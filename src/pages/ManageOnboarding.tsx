@@ -2,9 +2,6 @@ import React, { useEffect, useState } from 'react';
 import QuestionForm from '../components/QuestionForm';
 import type { NewQuestion } from '../components/QuestionForm';
 
-/**
- * Optional: Vite env typing for TS (keeps TS happy if you have this globally).
- */
 declare global {
   interface ImportMetaEnv {
     readonly VITE_API_BASE?: string;
@@ -14,31 +11,28 @@ declare global {
   }
 }
 
-/** Safely resolve API base without referencing `process` or `import` as a value. */
 function resolveApiBase(): string {
-  // 1) Vite env via import.meta.env — wrapped in try/catch so editors without support won't crash.
   try {
     const v = (import.meta as any)?.env?.VITE_API_BASE;
     if (v) return String(v);
   } catch {
-    // import.meta may not be available in some analysis tools — ignore
+    // ignore
   }
 
-  // 2) Look for CRA-style env injected into globalThis (hosting solutions sometimes expose these)
   const g: any = globalThis as any;
   if (g?.process?.env?.REACT_APP_API_BASE) return String(g.process.env.REACT_APP_API_BASE);
   if (g?.__REACT_APP_API_BASE) return String(g.__REACT_APP_API_BASE);
   if (g?.__ENV?.REACT_APP_API_BASE) return String(g.__ENV.REACT_APP_API_BASE);
   if (g?.__ENV?.VITE_API_BASE) return String(g.__ENV.VITE_API_BASE);
 
-  // 3) Final fallback (original hard-coded URL)
   return 'https://5ep59flti9.execute-api.us-east-1.amazonaws.com/dev/api/v1';
 }
 
 const API_BASE = resolveApiBase();
 
+// ✅ FIXED: id is now string (Q1, Q2, Q3...)
 export interface Question extends NewQuestion {
-  id: number;
+  id: string;  // Changed from number to string
   order: number;
   questionId?: string;
   category: string;
@@ -82,9 +76,12 @@ function normalizeGender(val: any): GenderOption {
   return 'All Genders';
 }
 
+// ✅ FIXED: Keep id as string
 function normalizeQuestion(item: any): Question {
-  const id = toNumber(item.id ?? item.ID ?? item.pk_id ?? item.itemId, NaN);
-  const questionId = item.questionId ?? item.question_id ?? item.qid ?? undefined;
+  // Backend returns id as string (Q1, Q2, Q3...)
+  const id = String(item.id ?? item.questionId ?? item.question_id ?? '');
+  const questionId = item.questionId ?? item.question_id ?? item.qid ?? id;
+  
   const text =
     item.text ??
     item.question_text ??
@@ -92,9 +89,11 @@ function normalizeQuestion(item: any): Question {
     item.question ??
     item.body ??
     '';
-  const order = toNumber(item.order ?? item.displayOrder ?? item.sort ?? 0);
+  
+  const order = toNumber(item.order ?? item.displayOrder ?? item.sort, 0);
 
-  const category = String(item.phase ?? item.phaseName ?? item.category ?? 'Uncategorized');
+  // Backend returns 'category' and 'phase' - use either
+  const category = String(item.category ?? item.phase ?? item.phaseName ?? 'Uncategorized');
 
   let applicableFor: GenderOption[] = [];
 
@@ -132,7 +131,7 @@ function normalizeQuestion(item: any): Question {
   applicableFor = Array.from(new Set(applicableFor));
 
   return {
-    id: Number.isNaN(id) ? 0 : id,
+    id,
     questionId,
     text,
     order,
@@ -149,8 +148,9 @@ function normalizeArray(payload: any): Question[] {
 
   const normalized = arr.map(normalizeQuestion);
   normalized.sort((a, b) => {
-    if ((a.order ?? 0) !== (b.order ?? 0)) return (a.order ?? 0) - (b.order ?? 0);
-    return (a.id ?? 0) - (b.id ?? 0);
+    if (a.order !== b.order) return a.order - b.order;
+    // Fallback: compare id strings
+    return a.id.localeCompare(b.id);
   });
   return normalized;
 }
@@ -158,8 +158,8 @@ function normalizeArray(payload: any): Question[] {
 const ManageOnboarding: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [draggedId, setDraggedId] = useState<number | null>(null);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [draggedId, setDraggedId] = useState<string | null>(null);  // ✅ Changed to string
+  const [editingId, setEditingId] = useState<string | null>(null);  // ✅ Changed to string
   const [editInitialData, setEditInitialData] = useState<NewQuestion | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingReorder, setSavingReorder] = useState(false);
@@ -184,7 +184,9 @@ const ManageOnboarding: React.FC = () => {
           return;
         }
         const data = await res.json();
+        console.log('Backend response:', data); // Debug log
         const normalized = normalizeArray(data);
+        console.log('Normalized questions:', normalized); // Debug log
         setQuestions(normalized);
       } catch (err) {
         console.error('Error loading questions:', err);
@@ -198,6 +200,7 @@ const ManageOnboarding: React.FC = () => {
   const handleSaveQuestion = async (data: NewQuestion) => {
     try {
       if (editingId !== null) {
+        // UPDATE
         const res = await fetch(`${API_BASE}/admin/questions/${editingId}`, {
           method: 'PUT',
           headers: getAuthHeaders(),
@@ -219,6 +222,7 @@ const ManageOnboarding: React.FC = () => {
         return;
       }
 
+      // ADD
       const res = await fetch(`${API_BASE}/admin/questions`, {
         method: 'POST',
         headers: getAuthHeaders(),
@@ -235,7 +239,7 @@ const ManageOnboarding: React.FC = () => {
 
       setQuestions((prev) => {
         const arr = [...prev, created];
-        arr.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        arr.sort((a, b) => a.order - b.order);
         return arr;
       });
 
@@ -251,8 +255,8 @@ const ManageOnboarding: React.FC = () => {
     setEditInitialData(null);
   };
 
-  // --- Drag & Drop handlers (native HTML5) ---
-  const handleDragStart = (id: number) => {
+  // ✅ FIXED: id is now string
+  const handleDragStart = (id: string) => {
     setDraggedId(id);
   };
 
@@ -260,7 +264,7 @@ const ManageOnboarding: React.FC = () => {
     event.preventDefault();
   };
 
-  const handleDrop = async (targetId: number) => {
+  const handleDrop = async (targetId: string) => {
     if (draggedId === null || draggedId === targetId) return;
 
     let updatedSnapshot: Question[] = [];
@@ -285,8 +289,8 @@ const ManageOnboarding: React.FC = () => {
     try {
       const payload = {
         questions: updatedSnapshot.map((q) => ({
-          id: q.id,
-          questionId: q.questionId,
+          id: q.id,  // Now sends string (Q1, Q2, Q3...)
+          questionId: q.questionId ?? q.id,
         })),
       };
 
@@ -336,7 +340,7 @@ const ManageOnboarding: React.FC = () => {
     setDraggedId(null);
   };
 
-  const handleEdit = (id: number) => {
+  const handleEdit = (id: string) => {
     const q = questions.find((q) => q.id === id);
     if (!q) return;
 
@@ -349,7 +353,7 @@ const ManageOnboarding: React.FC = () => {
     setShowForm(true);
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: string) => {
     try {
       const res = await fetch(`${API_BASE}/admin/questions/${id}`, {
         method: 'DELETE',
