@@ -6,11 +6,13 @@ export interface Question extends NewQuestion {
   id: number;
   order: number;
   questionId?: string;
-  category?: string;
-  applicableFor: string[];
+  // Make category required to match NewQuestion contract
+  category: string;
+  // Ensure applicableFor exactly matches NewQuestion's type
+  applicableFor: NewQuestion['applicableFor'];
 }
 
-const API_BASE = 'https://5ep59flti0.execute-api.us-east-1.amazonaws.com/dev/api/v1';
+const API_BASE = 'https://5ep59flti9.execute-api.us-east-1.amazonaws.com/dev/api/v1';
 
 function getAuthHeaders() {
   const token = localStorage.getItem('accessToken') || '';
@@ -27,6 +29,36 @@ function toNumber(val: any, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/**
+ * Derive the GenderOption type from NewQuestion so we stay in sync with your form types.
+ * This resolves the "string not assignable to GenderOption" compile errors.
+ */
+type GenderOption = NewQuestion['applicableFor'][number];
+
+const KNOWN_GENDERS = ['Male', 'Female', 'Non-binary', 'All Genders'] as const;
+
+/** Normalize incoming strings/values into a valid GenderOption */
+function normalizeGender(val: any): GenderOption {
+  if (val === null || val === undefined) return 'All Genders';
+  const s = String(val).trim();
+
+  if (!s) return 'All Genders';
+
+  const lower = s.toLowerCase();
+
+  // common variations mapping
+  if (lower === 'm' || lower === 'male' || lower.includes('male')) return 'Male';
+  if (lower === 'f' || lower === 'female' || lower.includes('female')) return 'Female';
+  if (lower.includes('non') || lower.includes('nonbinary') || lower.includes('non-binary')) return 'Non-binary';
+  if (lower.includes('all')) return 'All Genders';
+
+  // If it's already one of known genders (case-sensitive check)
+  if ((KNOWN_GENDERS as readonly string[]).includes(s)) return s as GenderOption;
+
+  // fallback: prefer 'All Genders' instead of an arbitrary string
+  return 'All Genders';
+}
+
 function normalizeQuestion(item: any): Question {
   const id = toNumber(item.id ?? item.ID ?? item.pk_id ?? item.itemId, NaN);
   const questionId = item.questionId ?? item.question_id ?? item.qid ?? undefined;
@@ -38,23 +70,49 @@ function normalizeQuestion(item: any): Question {
     item.body ??
     '';
   const order = toNumber(item.order ?? item.displayOrder ?? item.sort ?? 0);
-  const category = item.phase ?? item.phaseName ?? item.category ?? 'Uncategorized';
 
-  let applicableFor: string[] = [];
-  if (Array.isArray(item.applicableFor)) applicableFor = item.applicableFor;
-  else if (Array.isArray(item.applicable_for)) applicableFor = item.applicable_for;
-  else if (typeof item.applicableFor === 'string') {
+  // ensure we always produce a string category
+  const category = String(item.phase ?? item.phaseName ?? item.category ?? 'Uncategorized');
+
+  // ensure applicableFor exactly matches NewQuestion['applicableFor'] (i.e., GenderOption[])
+  let applicableFor: GenderOption[] = [];
+
+  if (Array.isArray(item.applicableFor)) {
+    applicableFor = item.applicableFor.map(normalizeGender);
+  } else if (Array.isArray(item.applicable_for)) {
+    applicableFor = item.applicable_for.map(normalizeGender);
+  } else if (typeof item.applicableFor === 'string') {
+    // try parse JSON string (e.g. '["Male","Female"]') or treat as single value
     try {
       const parsed = JSON.parse(item.applicableFor);
-      applicableFor = Array.isArray(parsed) ? parsed : [item.applicableFor];
+      if (Array.isArray(parsed)) {
+        applicableFor = parsed.map(normalizeGender);
+      } else {
+        applicableFor = [normalizeGender(parsed)];
+      }
     } catch {
-      applicableFor = item.applicableFor ? [item.applicableFor] : [];
+      // not JSON: treat as a single comma-separated or single value
+      if (item.applicableFor.includes(',')) {
+        applicableFor = item.applicableFor.split(',').map((s: string) => normalizeGender(s));
+      } else {
+        applicableFor = [normalizeGender(item.applicableFor)];
+      }
     }
   } else if (typeof item.applicable_for === 'string') {
-    applicableFor = item.applicable_for ? [item.applicable_for] : [];
+    if (item.applicable_for.includes(',')) {
+      applicableFor = item.applicable_for.split(',').map((s: string) => normalizeGender(s));
+    } else {
+      applicableFor = [normalizeGender(item.applicable_for)];
+    }
   }
 
-  if (applicableFor.length === 0) applicableFor = ['All Genders'];
+  if (!Array.isArray(applicableFor) || applicableFor.length === 0) {
+    // default fallback
+    applicableFor = ['All Genders'];
+  }
+
+  // Ensure uniqueness and stable ordering
+  applicableFor = Array.from(new Set(applicableFor));
 
   return {
     id: Number.isNaN(id) ? 0 : id,
@@ -275,6 +333,7 @@ const ManageOnboarding: React.FC = () => {
     if (!q) return;
 
     setEditingId(id);
+    // q.category is now guaranteed to be a string and applicableFor matches NewQuestion
     setEditInitialData({
       text: q.text,
       category: q.category,
