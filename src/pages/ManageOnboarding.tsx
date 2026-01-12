@@ -10,6 +10,8 @@ if (!API_BASE) {
   );
 }
 
+// -- TYPES --
+
 export interface Question extends NewQuestion {
   id: string;
   order: number;
@@ -17,6 +19,12 @@ export interface Question extends NewQuestion {
   category: string;
   applicableFor: NewQuestion['applicableFor'];
 }
+
+type GenderOption = NewQuestion['applicableFor'][number];
+
+const KNOWN_GENDERS = ['Male', 'Female', 'Non-binary', 'All Genders'] as const;
+
+// -- HELPERS --
 
 function getAuthHeaders() {
   const token = localStorage.getItem('accessToken') || '';
@@ -33,62 +41,61 @@ function toNumber(val: any, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-type GenderOption = NewQuestion['applicableFor'][number];
-
-const KNOWN_GENDERS = ['Male', 'Female', 'Non-binary', 'All Genders'] as const;
-
 function normalizeGender(val: any): GenderOption {
   if (val === null || val === undefined) return 'All Genders';
   const s = String(val).trim();
   if (!s) return 'All Genders';
   const lower = s.toLowerCase();
+  
   if (lower === 'm' || lower === 'male' || lower.includes('male')) return 'Male';
   if (lower === 'f' || lower === 'female' || lower.includes('female')) return 'Female';
   if (lower.includes('non') || lower.includes('nonbinary') || lower.includes('non-binary')) return 'Non-binary';
   if (lower.includes('all')) return 'All Genders';
+  
   if ((KNOWN_GENDERS as readonly string[]).includes(s)) return s as GenderOption;
   return 'All Genders';
 }
 
 function normalizeQuestion(item: any): Question {
+  // Map various potential ID fields to 'id' (string)
   const id = String(item.id ?? item.questionId ?? item.question_id ?? '');
   const questionId = item.questionId ?? item.question_id ?? item.qid ?? id;
   const text = item.text ?? item.question_text ?? item.questionText ?? item.question ?? item.body ?? '';
   const order = toNumber(item.order ?? item.displayOrder ?? item.sort, 0);
   const category = String(item.category ?? item.phase ?? item.phaseName ?? 'Uncategorized');
 
+  // Normalize Gender Array
   let applicableFor: GenderOption[] = [];
-  if (Array.isArray(item.applicableFor)) {
-    applicableFor = item.applicableFor.map(normalizeGender);
-  } else if (Array.isArray(item.applicable_for)) {
-    applicableFor = item.applicable_for.map(normalizeGender);
-  } else if (typeof item.applicableFor === 'string') {
+  
+  // Handle different potential incoming formats (array vs string vs CSV string)
+  const rawAppFor = item.applicableFor ?? item.applicable_for;
+  
+  if (Array.isArray(rawAppFor)) {
+    applicableFor = rawAppFor.map(normalizeGender);
+  } else if (typeof rawAppFor === 'string') {
     try {
-      const parsed = JSON.parse(item.applicableFor);
+      // Try parsing JSON string (e.g. "[\"Male\"]")
+      const parsed = JSON.parse(rawAppFor);
       if (Array.isArray(parsed)) {
         applicableFor = parsed.map(normalizeGender);
       } else {
         applicableFor = [normalizeGender(parsed)];
       }
     } catch {
-      if (item.applicableFor.includes(',')) {
-        applicableFor = item.applicableFor.split(',').map((s: string) => normalizeGender(s));
+      // Fallback to comma-separated string
+      if (rawAppFor.includes(',')) {
+        applicableFor = rawAppFor.split(',').map((s: string) => normalizeGender(s));
       } else {
-        applicableFor = [normalizeGender(item.applicableFor)];
+        applicableFor = [normalizeGender(rawAppFor)];
       }
-    }
-  } else if (typeof item.applicable_for === 'string') {
-    if (item.applicable_for.includes(',')) {
-      applicableFor = item.applicable_for.split(',').map((s: string) => normalizeGender(s));
-    } else {
-      applicableFor = [normalizeGender(item.applicable_for)];
     }
   }
 
+  // Default fallback
   if (!Array.isArray(applicableFor) || applicableFor.length === 0) {
     applicableFor = ['All Genders'];
   }
-  applicableFor = Array.from(new Set(applicableFor));
+  applicableFor = Array.from(new Set(applicableFor)); // Deduplicate
 
   return { id, questionId, text, order, category, applicableFor };
 }
@@ -102,22 +109,31 @@ function normalizeArray(payload: any): Question[] {
   const normalized = arr.map(normalizeQuestion);
   normalized.sort((a, b) => {
     if (a.order !== b.order) return a.order - b.order;
+    // Secondary sort by ID for stability
     return a.id.localeCompare(b.id);
   });
   return normalized;
 }
 
+// -- COMPONENT --
+
 const ManageOnboarding: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
+  
+  // Drag & Drop State
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  // Edit/Delete State
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editInitialData, setEditInitialData] = useState<NewQuestion | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // UI State
   const [loading, setLoading] = useState(false);
   const [savingReorder, setSavingReorder] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const handleAddQuestionClick = () => {
@@ -126,6 +142,7 @@ const ManageOnboarding: React.FC = () => {
     setShowForm(true);
   };
 
+  // Auto-hide success message after 3s
   useEffect(() => {
     if (successMessage) {
       const timer = setTimeout(() => setSuccessMessage(null), 3000);
@@ -133,6 +150,7 @@ const ManageOnboarding: React.FC = () => {
     }
   }, [successMessage]);
 
+  // Initial Load
   useEffect(() => {
     const loadQuestions = async () => {
       setLoading(true);
@@ -161,17 +179,16 @@ const ManageOnboarding: React.FC = () => {
   const handleSaveQuestion = async (data: NewQuestion) => {
     try {
       setError(null);
-
-      // ✅ FIX: Explicitly map 'category' key for backend
-      // Backend expects: { text, category, applicableFor }
+      
       const payload = {
         text: data.text,
-        category: data.category, // Maps to 'phase' column in DB
+        category: data.category,
         applicableFor: data.applicableFor
       };
 
       console.log('Sending payload:', payload);
 
+      // -- UPDATE EXISTING --
       if (editingId !== null) {
         const res = await fetch(`${API_BASE}/admin/questions/${editingId}`, {
           method: 'PUT',
@@ -191,10 +208,11 @@ const ManageOnboarding: React.FC = () => {
         setEditingId(null);
         setEditInitialData(null);
         setShowForm(false);
-        setSuccessMessage(`✅ Question ${editingId} updated successfully!`);
+        setSuccessMessage(`✅ Question updated successfully!`);
         return;
       }
 
+      // -- CREATE NEW --
       const res = await fetch(`${API_BASE}/admin/questions`, {
         method: 'POST',
         headers: getAuthHeaders(),
@@ -216,7 +234,7 @@ const ManageOnboarding: React.FC = () => {
       });
 
       setShowForm(false);
-      setSuccessMessage(`✅ Question ${created.id} added successfully!`);
+      setSuccessMessage(`✅ Question added successfully!`);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'Failed to save question');
@@ -229,9 +247,13 @@ const ManageOnboarding: React.FC = () => {
     setEditInitialData(null);
   };
 
+  // -- DRAG AND DROP HANDLERS --
+
   const handleDragStart = (e: React.DragEvent<HTMLLIElement>, id: string) => {
     setDraggedId(id);
     e.dataTransfer.effectAllowed = 'move';
+    // Firefox requires data to be set
+    e.dataTransfer.setData('text/plain', id);
     if (e.currentTarget) {
       e.currentTarget.style.opacity = '0.5';
     }
@@ -256,8 +278,9 @@ const ManageOnboarding: React.FC = () => {
       return;
     }
 
-    let updatedSnapshot: Question[] = [];
+    // 1. Optimistic Update
     let previousState: Question[] = [];
+    let updatedSnapshot: Question[] = [];
 
     setQuestions((prev) => {
       previousState = [...prev];
@@ -270,6 +293,7 @@ const ManageOnboarding: React.FC = () => {
       const [moved] = clone.splice(fromIndex, 1);
       clone.splice(toIndex, 0, moved);
 
+      // Update order property locally for UI consistency
       const reord = clone.map((q, i) => ({ ...q, order: i + 1 }));
       updatedSnapshot = reord;
       return reord;
@@ -283,7 +307,7 @@ const ManageOnboarding: React.FC = () => {
       const payload = {
         questions: updatedSnapshot.map((q) => ({
           id: q.id,
-          questionId: q.questionId ?? q.id,
+          questionId: q.questionId ?? q.id, // Ensure backup ID exists
         })),
       };
 
@@ -294,32 +318,37 @@ const ManageOnboarding: React.FC = () => {
       });
 
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || `Reorder failed: ${res.status}`);
+        // Try to get JSON error, else text, else generic
+        let errMsg = `Reorder failed: ${res.status}`;
+        try {
+            const errorText = await res.text();
+            console.error("❌ Backend Error Response:", errorText); // Log full error for debugging
+            try {
+                const errorJson = JSON.parse(errorText);
+                if (errorJson.error) errMsg = errorJson.error;
+                else if (errorJson.message) errMsg = errorJson.message;
+            } catch {
+                // Not JSON, use text if short
+                if (errorText.length < 100) errMsg = errorText; 
+            }
+        } catch {}
+        
+        throw new Error(errMsg);
       }
 
       const result = await res.json();
+      
+      // 2. Sync with Backend Response
       if (result && (Array.isArray(result) || Array.isArray(result.questions))) {
         setQuestions(normalizeArray(result));
       }
+      
       setSuccessMessage('✅ Questions reordered successfully!');
     } catch (err) {
       console.error('❌ Error reordering:', err);
+      // 3. Rollback on Error
       setQuestions(previousState);
       setError(err instanceof Error ? err.message : 'Failed to reorder questions');
-
-      try {
-        const refetch = await fetch(`${API_BASE}/admin/questions`, {
-          method: 'GET',
-          headers: getAuthHeaders(),
-        });
-        if (refetch.ok) {
-          const data = await refetch.json();
-          setQuestions(normalizeArray(data));
-        }
-      } catch (refetchErr) {
-        console.error('Refetch failed', refetchErr);
-      }
     } finally {
       setSavingReorder(false);
     }
@@ -333,12 +362,13 @@ const ManageOnboarding: React.FC = () => {
     setDragOverId(null);
   };
 
+  // -- EDIT & DELETE --
+
   const handleEdit = (id: string) => {
     const q = questions.find((q) => q.id === id);
     if (!q) return;
 
     setEditingId(id);
-    // ✅ Initialize form with correct 'category' from question data
     setEditInitialData({
       text: q.text,
       category: q.category, 
@@ -363,8 +393,7 @@ const ManageOnboarding: React.FC = () => {
     try {
       setError(null);
       setDeletingId(id);
-      console.log(`🗑️ Deleting question: ${id}`);
-
+      
       const res = await fetch(`${API_BASE}/admin/questions/${id}`, {
         method: 'DELETE',
         headers: getAuthHeaders(),
@@ -383,7 +412,7 @@ const ManageOnboarding: React.FC = () => {
         setShowForm(false);
       }
 
-      setSuccessMessage(`✅ Question ${id} deleted successfully!`);
+      setSuccessMessage(`✅ Question deleted successfully!`);
     } catch (err) {
       console.error('❌ Error deleting question:', err);
       setError(err instanceof Error ? err.message : 'Failed to delete question');
@@ -403,24 +432,24 @@ const ManageOnboarding: React.FC = () => {
         <button className="btn-add-question" onClick={handleAddQuestionClick}>
           + Add New Question
         </button>
-        {savingReorder && <span style={{ marginLeft: 12, color: '#0066cc' }}>💾 Saving order…</span>}
+        {savingReorder && <span style={{ marginLeft: 12, color: '#0066cc', fontWeight: 500 }}>💾 Saving order…</span>}
       </section>
 
       {successMessage && (
-        <section className="card card-success" style={{ backgroundColor: '#d4edda', border: '1px solid #28a745', padding: '12px 16px', marginBottom: '16px', borderRadius: '8px' }}>
+        <section className="card card-success" style={{ backgroundColor: '#d4edda', border: '1px solid #c3e6cb', padding: '12px 16px', marginBottom: '16px', borderRadius: '8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '20px' }}>✅</span>
-            <span style={{ color: '#155724' }}>{successMessage}</span>
+            <span style={{ color: '#155724', fontWeight: 500 }}>{successMessage}</span>
             <button onClick={() => setSuccessMessage(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', color: '#155724' }}>✕</button>
           </div>
         </section>
       )}
 
       {error && (
-        <section className="card card-error" style={{ backgroundColor: '#fff3cd', border: '1px solid #ffc107', padding: '12px 16px', marginBottom: '16px', borderRadius: '8px' }}>
+        <section className="card card-error" style={{ backgroundColor: '#fff3cd', border: '1px solid #ffeeba', padding: '12px 16px', marginBottom: '16px', borderRadius: '8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '20px' }}>⚠️</span>
-            <span style={{ color: '#856404' }}>{error}</span>
+            <span style={{ color: '#856404', fontWeight: 500 }}>{error}</span>
             <button onClick={() => setError(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px' }}>✕</button>
           </div>
         </section>
@@ -470,6 +499,7 @@ const ManageOnboarding: React.FC = () => {
                     cursor: deletingId === q.id ? 'not-allowed' : 'grab',
                     transition: 'all 0.2s ease',
                     opacity: draggedId === q.id ? 0.5 : deletingId === q.id ? 0.6 : 1,
+                    border: dragOverId === q.id ? '2px dashed #0066cc' : undefined
                   }}
                 >
                   <div className="question-index-circle">{index + 1}</div>
