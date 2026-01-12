@@ -67,14 +67,12 @@ function normalizeQuestion(item: any): Question {
   // Normalize Gender Array
   let applicableFor: GenderOption[] = [];
   
-  // Handle different potential incoming formats (array vs string vs CSV string)
   const rawAppFor = item.applicableFor ?? item.applicable_for;
   
   if (Array.isArray(rawAppFor)) {
     applicableFor = rawAppFor.map(normalizeGender);
   } else if (typeof rawAppFor === 'string') {
     try {
-      // Try parsing JSON string (e.g. "[\"Male\"]")
       const parsed = JSON.parse(rawAppFor);
       if (Array.isArray(parsed)) {
         applicableFor = parsed.map(normalizeGender);
@@ -82,7 +80,6 @@ function normalizeQuestion(item: any): Question {
         applicableFor = [normalizeGender(parsed)];
       }
     } catch {
-      // Fallback to comma-separated string
       if (rawAppFor.includes(',')) {
         applicableFor = rawAppFor.split(',').map((s: string) => normalizeGender(s));
       } else {
@@ -109,7 +106,6 @@ function normalizeArray(payload: any): Question[] {
   const normalized = arr.map(normalizeQuestion);
   normalized.sort((a, b) => {
     if (a.order !== b.order) return a.order - b.order;
-    // Secondary sort by ID for stability
     return a.id.localeCompare(b.id);
   });
   return normalized;
@@ -307,9 +303,21 @@ const ManageOnboarding: React.FC = () => {
       const payload = {
         questions: updatedSnapshot.map((q) => ({
           id: q.id,
-          questionId: q.questionId ?? q.id, // Ensure backup ID exists
+          questionId: q.questionId ?? q.id,
         })),
       };
+
+      // 🔍 DEBUG LOGGING
+      console.group('🚀 Reorder Request Debug');
+      console.log('Target URL:', `${API_BASE}/admin/questions/reorder`);
+      console.log('Payload:', JSON.stringify(payload, null, 2));
+      
+      // Check for potential data issues
+      const invalidItems = payload.questions.filter(q => !q.id || q.id === 'undefined');
+      if (invalidItems.length > 0) {
+        console.error('⚠️ WARNING: Payload contains items with missing/invalid IDs:', invalidItems);
+      }
+      console.groupEnd();
 
       const res = await fetch(`${API_BASE}/admin/questions/reorder`, {
         method: 'PUT',
@@ -318,18 +326,16 @@ const ManageOnboarding: React.FC = () => {
       });
 
       if (!res.ok) {
-        // Try to get JSON error, else text, else generic
         let errMsg = `Reorder failed: ${res.status}`;
         try {
             const errorText = await res.text();
-            console.error("❌ Backend Error Response:", errorText); // Log full error for debugging
+            console.error("❌ Backend Error Response Body:", errorText); 
             try {
                 const errorJson = JSON.parse(errorText);
                 if (errorJson.error) errMsg = errorJson.error;
                 else if (errorJson.message) errMsg = errorJson.message;
             } catch {
-                // Not JSON, use text if short
-                if (errorText.length < 100) errMsg = errorText; 
+                if (errorText.length < 200) errMsg = errorText; 
             }
         } catch {}
         
@@ -337,6 +343,7 @@ const ManageOnboarding: React.FC = () => {
       }
 
       const result = await res.json();
+      console.log('✅ Backend Success Response:', result);
       
       // 2. Sync with Backend Response
       if (result && (Array.isArray(result) || Array.isArray(result.questions))) {
