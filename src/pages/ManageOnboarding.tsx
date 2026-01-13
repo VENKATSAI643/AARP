@@ -35,12 +35,8 @@ const KNOWN_GENDERS = ['Male', 'Female', 'Non-binary', 'All Genders'] as const;
 
 
 function getAuthHeaders() {
-  const token = localStorage.getItem('accessToken') || '';
-  const tenantId = localStorage.getItem('tenantId') || 'default';
   return {
     'Content-Type': 'application/json',
-    Authorization: token ? `Bearer ${token}` : '',
-    'X-Tenant-ID': tenantId,
   };
 }
 
@@ -204,7 +200,7 @@ const ManageOnboarding: React.FC = () => {
         console.log('Raw response structure:', data);
 
         const rawItems = Array.isArray(data) ? data : data.questions || [];
-        console.log(`📦 Total items received: ${rawItems.length}`);
+        console.log(`📦 Total items received from backend: ${rawItems.length}`);
 
         // Check for items with missing IDs
         const itemsWithoutId = rawItems.filter((item: any) => !item.id && !item.question_id);
@@ -213,7 +209,7 @@ const ManageOnboarding: React.FC = () => {
         }
 
         // Log all received IDs for debugging
-        console.log('📋 All received items:');
+        console.log('📋 All received items from backend:');
         rawItems.forEach((item: any, idx: number) => {
           const numericId = String(item.id || 'MISSING');
           const questionId = String(item.question_id || item.questionId || 'MISSING');
@@ -262,6 +258,31 @@ const ManageOnboarding: React.FC = () => {
         });
 
         setQuestions(validQuestions);
+
+        // 🔍 DIAGNOSTIC: Check loaded questions
+        console.group('🔍 INITIAL LOAD DIAGNOSTIC');
+        console.log('✅ Questions loaded into state:', validQuestions.length);
+        console.log('📋 All loaded IDs:', validQuestions.map(q => q.id).join(', '));
+
+        const expectedCount = 25; // IDs 4-28
+        if (validQuestions.length < expectedCount) {
+          console.warn(`⚠️  WARNING: Expected ${expectedCount} questions, but only loaded ${validQuestions.length}`);
+
+          const loadedIds = new Set(validQuestions.map(q => q.id));
+          const missing = [];
+          for (let i = 4; i <= 28; i++) {
+            if (!loadedIds.has(String(i))) {
+              missing.push(i);
+            }
+          }
+          console.error('❌ Missing IDs from initial load:', missing);
+        } else if (validQuestions.length > expectedCount) {
+          console.warn(`⚠️  WARNING: Expected ${expectedCount} questions, but loaded ${validQuestions.length} (duplicates?)`);
+        } else {
+          console.log('✅ All 25 questions loaded correctly');
+        }
+
+        console.groupEnd();
 
         if (validQuestions.length === 0 && rawItems.length > 0) {
           console.warn('⚠️ WARNING: Backend returned data but all items were filtered out as invalid!');
@@ -391,12 +412,13 @@ const ManageOnboarding: React.FC = () => {
     e.preventDefault();
     setDragOverId(null);
 
+    // 🔍 CRITICAL DEBUG: Check state before any operations
+    console.log('🔍 State before reorder:', questions.length, 'items, IDs:', questions.map(q => q.id));
 
     if (draggedId === null || draggedId === targetId) {
       setDraggedId(null);
       return;
     }
-
 
     // -- 1. Calculate New Order FIRST (Synchronously) --
     const currentQuestions = [...questions];
@@ -415,25 +437,20 @@ const ManageOnboarding: React.FC = () => {
       return;
     }
 
-
     // Move the item locally
     const [moved] = currentQuestions.splice(fromIndex, 1);
     currentQuestions.splice(toIndex, 0, moved);
 
-
     // Assign new order numbers
     const reorderedList = currentQuestions.map((q, i) => ({ ...q, order: i + 1 }));
-
 
     // -- 2. Optimistic Update --
     const previousState = [...questions];
     setQuestions(reorderedList);
 
-
     setDraggedId(null);
     setSavingReorder(true);
     setError(null);
-
 
     try {
       // -- 3. Build Payload with Validation --
@@ -450,18 +467,35 @@ const ManageOnboarding: React.FC = () => {
         }),
       };
 
+      // 🔍 COMPREHENSIVE DEBUG LOGGING
+      console.group('🚀 COMPLETE REORDER PAYLOAD DEBUG');
+      console.log('📊 Questions in state:', questions.length);
+      console.log('📦 Questions being sent:', payload.questions.length);
+      console.log('🔄 Moved:', `ID ${draggedId} from position ${fromIndex + 1} → ${toIndex + 1}`);
 
-      // 🔍 ENHANCED DEBUG LOGGING
-      console.group('🚀 Reorder Request Validation');
-      console.log('Total questions to reorder:', payload.questions.length);
-      console.log('Full payload:', JSON.stringify(payload, null, 2));
-      console.log('IDs being sent (first 10):', payload.questions.slice(0, 10).map(q => q.id));
-      console.log('IDs being sent (last 5):', payload.questions.slice(-5).map(q => q.id));
+      // Show ALL IDs
+      console.log('\n📋 ALL IDs being sent (complete list):');
+      console.log(payload.questions.map(q => q.id).join(', '));
 
-      // Check for any invalid IDs
+      // Check for missing IDs (4-28)
+      const expectedIds = [];
+      for (let i = 4; i <= 28; i++) {
+        expectedIds.push(String(i));
+      }
+      const sentIds = new Set(payload.questions.map(q => q.id));
+      const missingIds = expectedIds.filter(id => !sentIds.has(id));
+
+      if (missingIds.length > 0) {
+        console.error('\n❌ MISSING IDs from payload:', missingIds);
+        console.error('❌ Expected 25 questions (IDs 4-28), but only sending', payload.questions.length);
+      } else {
+        console.log('\n✅ All 25 IDs present (4-28)');
+      }
+
+      // Check for invalid IDs
       const invalidIds = payload.questions.filter(q => !q.id || q.id === 'undefined');
       if (invalidIds.length > 0) {
-        console.error('❌ CRITICAL: Invalid IDs found in payload:', invalidIds);
+        console.error('\n❌ CRITICAL: Invalid IDs found in payload:', invalidIds);
         throw new Error(`Cannot send reorder request with invalid IDs: ${JSON.stringify(invalidIds)}`);
       }
 
@@ -472,19 +506,21 @@ const ManageOnboarding: React.FC = () => {
       });
       const duplicates = Array.from(idCounts.entries()).filter(([_, count]) => count > 1);
       if (duplicates.length > 0) {
-        console.error('❌ CRITICAL: Duplicate IDs found:', duplicates);
+        console.error('\n❌ CRITICAL: Duplicate IDs found:', duplicates);
         throw new Error(`Cannot send reorder request with duplicate IDs: ${duplicates.map(([id]) => id).join(', ')}`);
       }
 
-      console.groupEnd();
+      console.log('\n🎯 Full Payload (first 5 and last 5):');
+      console.log('First 5:', payload.questions.slice(0, 5));
+      console.log('Last 5:', payload.questions.slice(-5));
 
+      console.groupEnd();
 
       const res = await fetch(`${API_BASE}/admin/questions/reorder`, {
         method: 'PUT',
         headers: getAuthHeaders(),
         body: JSON.stringify(payload),
       });
-
 
       if (!res.ok) {
         let errMsg = `Reorder failed: ${res.status}`;
@@ -504,7 +540,6 @@ const ManageOnboarding: React.FC = () => {
         }
         throw new Error(errMsg);
       }
-
 
       const result = await res.json();
       console.log('✅ Backend Success Response:', result);
