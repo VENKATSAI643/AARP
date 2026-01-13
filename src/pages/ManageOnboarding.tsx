@@ -2,9 +2,7 @@ import React, { useEffect, useState } from 'react';
 import QuestionForm from '../components/QuestionForm';
 import type { NewQuestion } from '../components/QuestionForm';
 
-
 const API_BASE = import.meta.env.VITE_API_BASE;
-
 
 if (!API_BASE) {
   throw new Error(
@@ -12,9 +10,7 @@ if (!API_BASE) {
   );
 }
 
-
 // -- TYPES --
-
 
 export interface Question extends NewQuestion {
   id: string;
@@ -24,15 +20,11 @@ export interface Question extends NewQuestion {
   applicableFor: NewQuestion['applicableFor'];
 }
 
-
 type GenderOption = NewQuestion['applicableFor'][number];
-
 
 const KNOWN_GENDERS = ['Male', 'Female', 'Non-binary', 'All Genders'] as const;
 
-
 // -- HELPERS --
-
 
 function getAuthHeaders() {
   return {
@@ -40,12 +32,10 @@ function getAuthHeaders() {
   };
 }
 
-
 function toNumber(val: any, fallback = 0) {
   const n = Number(val);
   return Number.isFinite(n) ? n : fallback;
 }
-
 
 function normalizeGender(val: any): GenderOption {
   if (val === null || val === undefined) return 'All Genders';
@@ -62,20 +52,16 @@ function normalizeGender(val: any): GenderOption {
   return 'All Genders';
 }
 
-
 function normalizeQuestion(item: any): Question {
-  // CRITICAL: Always prioritize numeric 'id' field over question_id
-  // Backend should send: { id: 6, questionId: "Q5A", ... }
-
   let id: string;
 
-  // Priority 1: Use numeric 'id' field (this is the DynamoDB Sort Key)
+  // Priority 1: Use numeric 'id' field (DynamoDB Sort Key)
   if (item.id != null && item.id !== '') {
-    id = String(item.id);  // "6", "7", "25" etc.
+    id = String(item.id);
   } 
-  // Priority 2: Fallback to question_id only if numeric id is missing
+  // Priority 2: Fallback to question_id
   else if (item.question_id) {
-    id = String(item.question_id);  // "Q5A" as fallback
+    id = String(item.question_id);
   }
   // Priority 3: Last resort
   else {
@@ -86,7 +72,6 @@ function normalizeQuestion(item: any): Question {
   const text = item.text ?? item.question_text ?? item.questionText ?? item.question ?? item.body ?? '';
   const order = toNumber(item.order ?? item.displayOrder ?? item.sort, 0);
   const category = String(item.category ?? item.phase ?? item.phaseName ?? 'Uncategorized');
-
 
   // Normalize Gender Array
   let applicableFor: GenderOption[] = [];
@@ -112,23 +97,19 @@ function normalizeQuestion(item: any): Question {
     }
   }
 
-
   if (!Array.isArray(applicableFor) || applicableFor.length === 0) {
     applicableFor = ['All Genders'];
   }
   applicableFor = Array.from(new Set(applicableFor));
 
-
   return { id, questionId, text, order, category, applicableFor };
 }
-
 
 function normalizeArray(payload: any): Question[] {
   let arr: any[] = [];
   if (Array.isArray(payload)) arr = payload;
   else if (payload && Array.isArray(payload.questions)) arr = payload.questions;
   else arr = [];
-
 
   const normalized = arr.map(normalizeQuestion);
   normalized.sort((a, b) => {
@@ -138,9 +119,7 @@ function normalizeArray(payload: any): Question[] {
   return normalized;
 }
 
-
 // -- COMPONENT --
-
 
 const ManageOnboarding: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
@@ -150,12 +129,10 @@ const ManageOnboarding: React.FC = () => {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
 
-
   // Edit/Delete State
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editInitialData, setEditInitialData] = useState<NewQuestion | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-
 
   // UI State
   const [loading, setLoading] = useState(false);
@@ -163,13 +140,11 @@ const ManageOnboarding: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-
   const handleAddQuestionClick = () => {
     setEditingId(null);
     setEditInitialData(null);
     setShowForm(true);
   };
-
 
   // Auto-hide success message after 3s
   useEffect(() => {
@@ -178,7 +153,6 @@ const ManageOnboarding: React.FC = () => {
       return () => clearTimeout(timer);
     }
   }, [successMessage]);
-
 
   // Initial Load with Enhanced Validation
   useEffect(() => {
@@ -299,7 +273,6 @@ const ManageOnboarding: React.FC = () => {
     loadQuestions();
   }, []);
 
-
   const handleSaveQuestion = async (data: NewQuestion) => {
     try {
       setError(null);
@@ -310,9 +283,7 @@ const ManageOnboarding: React.FC = () => {
         applicableFor: data.applicableFor
       };
 
-
       console.log('💾 Sending question payload:', payload);
-
 
       // -- UPDATE EXISTING --
       if (editingId !== null) {
@@ -322,16 +293,13 @@ const ManageOnboarding: React.FC = () => {
           body: JSON.stringify(payload),
         });
 
-
         if (!res.ok) {
           const errorData = await res.json().catch(() => ({}));
           throw new Error(errorData.error || `Failed to update question: ${res.status}`);
         }
 
-
         const updatedRaw = await res.json();
         const updated = normalizeQuestion(updatedRaw);
-
 
         setQuestions((prev) => prev.map((q) => (q.id === editingId ? updated : q)));
         setEditingId(null);
@@ -341,7 +309,6 @@ const ManageOnboarding: React.FC = () => {
         return;
       }
 
-
       // -- CREATE NEW --
       const res = await fetch(`${API_BASE}/admin/questions`, {
         method: 'POST',
@@ -349,23 +316,19 @@ const ManageOnboarding: React.FC = () => {
         body: JSON.stringify(payload),
       });
 
-
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || `Failed to add question: ${res.status}`);
       }
 
-
       const createdRaw = await res.json();
       const created = normalizeQuestion(createdRaw);
-
 
       setQuestions((prev) => {
         const arr = [...prev, created];
         arr.sort((a, b) => a.order - b.order);
         return arr;
       });
-
 
       setShowForm(false);
       setSuccessMessage(`✅ Question added successfully!`);
@@ -375,16 +338,13 @@ const ManageOnboarding: React.FC = () => {
     }
   };
 
-
   const handleCancelForm = () => {
     setShowForm(false);
     setEditingId(null);
     setEditInitialData(null);
   };
 
-
   // -- DRAG AND DROP HANDLERS --
-
 
   const handleDragStart = (e: React.DragEvent<HTMLLIElement>, id: string) => {
     setDraggedId(id);
@@ -395,27 +355,26 @@ const ManageOnboarding: React.FC = () => {
     }
   };
 
-
   const handleDragOver = (e: React.DragEvent<HTMLLIElement>, id: string) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setDragOverId(id);
   };
 
-
   const handleDragLeave = () => {
     setDragOverId(null);
   };
-
 
   const handleDrop = async (e: React.DragEvent<HTMLLIElement>, targetId: string) => {
     e.preventDefault();
     setDragOverId(null);
 
-    // 🔍 CRITICAL DEBUG: Check state before any operations
-    console.log('🔍 State before reorder:', questions.length, 'items, IDs:', questions.map(q => q.id));
+    console.log("=".repeat(70));
+    console.log("🎯 DRAG & DROP EVENT");
+    console.log("=".repeat(70));
 
     if (draggedId === null || draggedId === targetId) {
+      console.log("⚠️ No action needed (dropped on self or invalid)");
       setDraggedId(null);
       return;
     }
@@ -424,6 +383,8 @@ const ManageOnboarding: React.FC = () => {
     const currentQuestions = [...questions];
     const fromIndex = currentQuestions.findIndex((q) => q.id === draggedId);
     const toIndex = currentQuestions.findIndex((q) => q.id === targetId);
+
+    console.log(`📍 Moving: ID ${draggedId} from index ${fromIndex} → ${toIndex}`);
 
     if (fromIndex === -1 || toIndex === -1) {
       console.error("❌ Could not find indices for drag/drop", {
@@ -441,6 +402,12 @@ const ManageOnboarding: React.FC = () => {
     const [moved] = currentQuestions.splice(fromIndex, 1);
     currentQuestions.splice(toIndex, 0, moved);
 
+    console.log("🔄 Moved item:", {
+      id: moved.id,
+      questionId: moved.questionId,
+      text: moved.text?.substring(0, 50)
+    });
+
     // Assign new order numbers
     const reorderedList = currentQuestions.map((q, i) => ({ ...q, order: i + 1 }));
 
@@ -454,115 +421,213 @@ const ManageOnboarding: React.FC = () => {
 
     try {
       // -- 3. Build Payload with Validation --
+      console.log("\n📦 PREPARING API PAYLOAD");
+
       const payload = {
-        questions: reorderedList.map((q) => {
+        questions: reorderedList.map((q, index) => {
           // Ensure we're sending valid IDs
           if (!q.id || q.id === '' || q.id === 'undefined') {
-            throw new Error(`Invalid ID detected in question: ${JSON.stringify(q)}`);
+            throw new Error(`Invalid ID detected in question at index ${index}: ${JSON.stringify(q)}`);
           }
-          return {
-            id: q.id,  // Numeric ID like "4", "5", "6"
+          const item = {
+            id: String(q.id),  // Numeric ID like "4", "5", "6"
             questionId: q.questionId || q.id,  // Question ID like "Q4", "Q5"
           };
+          console.log(`  [${index + 1}] id="${item.id}" qid="${item.questionId}"`);
+          return item;
         }),
       };
 
-      // 🔍 COMPREHENSIVE DEBUG LOGGING
-      console.group('🚀 COMPLETE REORDER PAYLOAD DEBUG');
-      console.log('📊 Questions in state:', questions.length);
-      console.log('📦 Questions being sent:', payload.questions.length);
-      console.log('🔄 Moved:', `ID ${draggedId} from position ${fromIndex + 1} → ${toIndex + 1}`);
+      console.log("\n✅ Payload prepared:", payload.questions.length, "items");
+      console.log("First 3:", payload.questions.slice(0, 3).map(q => q.id));
+      console.log("Last 3:", payload.questions.slice(-3).map(q => q.id));
 
-      // Show ALL IDs
-      console.log('\n📋 ALL IDs being sent (complete list):');
-      console.log(payload.questions.map(q => q.id).join(', '));
+      // Validate payload
+      const sentIds = new Set(payload.questions.map(q => q.id));
+      console.log("\n📋 ALL IDs being sent:", Array.from(sentIds).join(', '));
 
-      // Check for missing IDs (4-28)
+      // Check for expected IDs (4-28)
       const expectedIds = [];
       for (let i = 4; i <= 28; i++) {
         expectedIds.push(String(i));
       }
-      const sentIds = new Set(payload.questions.map(q => q.id));
       const missingIds = expectedIds.filter(id => !sentIds.has(id));
 
       if (missingIds.length > 0) {
         console.error('\n❌ MISSING IDs from payload:', missingIds);
-        console.error('❌ Expected 25 questions (IDs 4-28), but only sending', payload.questions.length);
+        throw new Error(`Missing IDs: ${missingIds.join(', ')}`);
       } else {
         console.log('\n✅ All 25 IDs present (4-28)');
       }
 
-      // Check for invalid IDs
-      const invalidIds = payload.questions.filter(q => !q.id || q.id === 'undefined');
-      if (invalidIds.length > 0) {
-        console.error('\n❌ CRITICAL: Invalid IDs found in payload:', invalidIds);
-        throw new Error(`Cannot send reorder request with invalid IDs: ${JSON.stringify(invalidIds)}`);
-      }
-
-      // Check for duplicate IDs
+      // Check for duplicates
       const idCounts = new Map<string, number>();
       payload.questions.forEach(q => {
         idCounts.set(q.id, (idCounts.get(q.id) || 0) + 1);
       });
       const duplicates = Array.from(idCounts.entries()).filter(([_, count]) => count > 1);
       if (duplicates.length > 0) {
-        console.error('\n❌ CRITICAL: Duplicate IDs found:', duplicates);
-        throw new Error(`Cannot send reorder request with duplicate IDs: ${duplicates.map(([id]) => id).join(', ')}`);
+        console.error('\n❌ DUPLICATE IDs found:', duplicates);
+        throw new Error(`Duplicate IDs: ${duplicates.map(([id]) => id).join(', ')}`);
       }
 
-      console.log('\n🎯 Full Payload (first 5 and last 5):');
-      console.log('First 5:', payload.questions.slice(0, 5));
-      console.log('Last 5:', payload.questions.slice(-5));
+      console.log("\n🎯 Full Payload (first 5 and last 5):");
+      console.log("First 5:", payload.questions.slice(0, 5));
+      console.log("Last 5:", payload.questions.slice(-5));
 
-      console.groupEnd();
+      // -- 4. MAKE API CALL WITH COMPREHENSIVE DEBUGGING --
+      const API_URL = `${API_BASE}/admin/questions/reorder`;
 
-      const res = await fetch(`${API_BASE}/admin/questions/reorder`, {
-        method: 'PUT',
-        headers: getAuthHeaders(),
-        body: JSON.stringify(payload),
+      console.log("\n" + "=".repeat(70));
+      console.log("🚀 CALLING API");
+      console.log("=".repeat(70));
+      console.log("URL:", API_URL);
+      console.log("Method: PUT");
+      console.log("Payload size:", JSON.stringify(payload).length, "bytes");
+
+      const payloadStr = JSON.stringify(payload, null, 2);
+      console.log("\n📋 PAYLOAD (first 1000 chars):");
+      console.log(payloadStr.substring(0, 1000));
+
+      const startTime = Date.now();
+
+      let response;
+      try {
+        console.log("\n⏳ Sending request...");
+        response = await fetch(API_URL, {
+          method: 'PUT',
+          headers: getAuthHeaders(),
+          body: JSON.stringify(payload),
+        });
+
+        const duration = Date.now() - startTime;
+        console.log(`✅ Response received in ${duration}ms`);
+
+      } catch (networkError) {
+        console.error("\n" + "=".repeat(70));
+        console.error("❌ NETWORK ERROR");
+        console.error("=".repeat(70));
+        console.error("Type:", (networkError as Error).name);
+        console.error("Message:", (networkError as Error).message);
+        console.error("Stack:", (networkError as Error).stack);
+        console.error("Browser online:", navigator.onLine);
+
+        setQuestions(previousState);
+        setSavingReorder(false);
+        setError(`Network error: ${(networkError as Error).message}`);
+        return;
+      }
+
+      // Log response details
+      console.log("\n📥 RESPONSE DETAILS:");
+      console.log("  Status:", response.status);
+      console.log("  Status Text:", response.statusText);
+      console.log("  OK:", response.ok);
+      console.log("  Headers:");
+      response.headers.forEach((value, key) => {
+        console.log(`    ${key}: ${value}`);
       });
 
-      if (!res.ok) {
-        let errMsg = `Reorder failed: ${res.status}`;
-        try {
-          const errorText = await res.text();
-          console.error("❌ Backend Error Response:", errorText); 
-          try {
-            const errorJson = JSON.parse(errorText);
-            if (errorJson.error) errMsg = errorJson.error;
-            else if (errorJson.message) errMsg = errorJson.message;
-            else if (errorJson.details) errMsg = `${errorJson.error || 'Error'}: ${errorJson.details}`;
-          } catch {
-            if (errorText.length < 300) errMsg = errorText; 
-          }
-        } catch (parseErr) {
-          console.error("Could not parse error response:", parseErr);
-        }
-        throw new Error(errMsg);
+      // Read response body
+      let responseText;
+      try {
+        responseText = await response.text();
+        console.log("\n📄 RAW RESPONSE:");
+        console.log("  Length:", responseText.length, "bytes");
+        console.log("  Body:", responseText.substring(0, 500));
+      } catch (textError) {
+        console.error("❌ Could not read response text:", textError);
+        setQuestions(previousState);
+        setSavingReorder(false);
+        setError("Error: Could not read server response");
+        return;
       }
 
-      const result = await res.json();
-      console.log('✅ Backend Success Response:', result);
+      // Parse JSON
+      let data;
+      try {
+        data = JSON.parse(responseText);
+        console.log("\n✅ JSON PARSED:");
+        console.log("  Keys:", Object.keys(data));
+        console.log("  Data:", data);
+      } catch (jsonError) {
+        console.error("\n" + "=".repeat(70));
+        console.error("❌ JSON PARSE ERROR");
+        console.error("=".repeat(70));
+        console.error("Error:", (jsonError as Error).message);
+        console.error("Response was:", responseText);
+
+        setQuestions(previousState);
+        setSavingReorder(false);
+        setError(`JSON parse error: ${(jsonError as Error).message}\n\nResponse: ${responseText.substring(0, 200)}`);
+        return;
+      }
+
+      // Check HTTP status
+      if (!response.ok) {
+        console.error("\n" + "=".repeat(70));
+        console.error(`❌ HTTP ${response.status} ERROR`);
+        console.error("=".repeat(70));
+        console.error("Status:", response.status, response.statusText);
+        console.error("Response data:", data);
+
+        const errorMsg = data.error || data.message || data.details || "Unknown error";
+        console.error("Error message:", errorMsg);
+
+        if (data.details) console.error("Details:", data.details);
+        if (data.received_keys) console.error("Received keys:", data.received_keys);
+
+        // Special handling for 500 errors
+        if (response.status === 500) {
+          console.error("\n🔍 500 ERROR ANALYSIS:");
+          console.error("  This is an Internal Server Error from API Gateway or Lambda");
+          console.error("  ⚠️  CHECK CLOUDWATCH LOGS FOR LAMBDA FUNCTION");
+          console.error("  Response body:", responseText);
+          console.error("  \nNext steps:");
+          console.error("  1. Go to AWS CloudWatch");
+          console.error("  2. Find Lambda function logs");
+          console.error("  3. Look for logs matching timestamp:", new Date().toISOString());
+          console.error("  4. Look for '🚀 LAMBDA INVOKED' or error messages");
+        }
+
+        setQuestions(previousState);
+        setSavingReorder(false);
+        setError(`Server error (${response.status}): ${errorMsg}`);
+        return;
+      }
+
+      // Success!
+      console.log("\n" + "=".repeat(70));
+      console.log("✅ REORDER SUCCESSFUL");
+      console.log("=".repeat(70));
+      console.log("Message:", data.message);
+      console.log("Questions returned:", data.questions?.length || 0);
 
       // Update with server-verified data if available
-      if (result && (Array.isArray(result) || Array.isArray(result.questions))) {
-        const serverQuestions = normalizeArray(result);
+      if (data && (Array.isArray(data) || Array.isArray(data.questions))) {
+        const serverQuestions = normalizeArray(data);
         if (serverQuestions.length > 0) {
           setQuestions(serverQuestions);
+          console.log("✅ State updated with server response");
         }
       }
 
       setSuccessMessage('✅ Questions reordered successfully!');
+
     } catch (err) {
-      console.error('❌ Error reordering:', err);
-      // Rollback to previous state
+      console.error("\n" + "=".repeat(70));
+      console.error("💥 UNEXPECTED ERROR");
+      console.error("=".repeat(70));
+      console.error("Name:", (err as Error).name);
+      console.error("Message:", (err as Error).message);
+      console.error("Stack:", (err as Error).stack);
+
       setQuestions(previousState);
-      setError(err instanceof Error ? err.message : 'Failed to reorder questions');
+      setError((err as Error).message || 'Failed to reorder questions');
     } finally {
       setSavingReorder(false);
     }
   };
-
 
   const handleDragEnd = (e: React.DragEvent<HTMLLIElement>) => {
     if (e.currentTarget) {
@@ -572,14 +637,11 @@ const ManageOnboarding: React.FC = () => {
     setDragOverId(null);
   };
 
-
   // -- EDIT & DELETE --
-
 
   const handleEdit = (id: string) => {
     const q = questions.find((q) => q.id === id);
     if (!q) return;
-
 
     setEditingId(id);
     setEditInitialData({
@@ -590,7 +652,6 @@ const ManageOnboarding: React.FC = () => {
     setShowForm(true);
   };
 
-
   const handleDelete = async (id: string) => {
     const question = questions.find((q) => q.id === id);
     const questionText = question?.text || id;
@@ -598,14 +659,11 @@ const ManageOnboarding: React.FC = () => {
       ? questionText.substring(0, 50) + '...' 
       : questionText;
 
-
     if (!confirm(`Are you sure you want to delete this question?\n\n"${truncatedText}"\n\nThis action cannot be undone.`)) {
       return;
     }
 
-
     if (deletingId) return;
-
 
     try {
       setError(null);
@@ -616,22 +674,18 @@ const ManageOnboarding: React.FC = () => {
         headers: getAuthHeaders(),
       });
 
-
       if (!res.ok && res.status !== 204) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || `Delete failed: ${res.status}`);
       }
 
-
       setQuestions((prev) => prev.filter((q) => q.id !== id));
-
 
       if (editingId === id) {
         setEditingId(null);
         setEditInitialData(null);
         setShowForm(false);
       }
-
 
       setSuccessMessage(`✅ Question deleted successfully!`);
     } catch (err) {
@@ -642,7 +696,6 @@ const ManageOnboarding: React.FC = () => {
     }
   };
 
-
   return (
     <div className="page-wrapper">
       <section className="card card-page-header">
@@ -650,14 +703,12 @@ const ManageOnboarding: React.FC = () => {
         <p className="page-subtitle">Add and reorder questions for the AI chatbot.</p>
       </section>
 
-
       <section className="card card-toolbar">
         <button className="btn-add-question" onClick={handleAddQuestionClick}>
           + Add New Question
         </button>
         {savingReorder && <span style={{ marginLeft: 12, color: '#0066cc', fontWeight: 500 }}>💾 Saving order…</span>}
       </section>
-
 
       {successMessage && (
         <section className="card card-success" style={{ backgroundColor: '#d4edda', border: '1px solid #c3e6cb', padding: '12px 16px', marginBottom: '16px', borderRadius: '8px' }}>
@@ -669,7 +720,6 @@ const ManageOnboarding: React.FC = () => {
         </section>
       )}
 
-
       {error && (
         <section className="card card-error" style={{ backgroundColor: '#fff3cd', border: '1px solid #ffeeba', padding: '12px 16px', marginBottom: '16px', borderRadius: '8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -679,7 +729,6 @@ const ManageOnboarding: React.FC = () => {
           </div>
         </section>
       )}
-
 
       {showForm && (
         <section className="card card-add-form">
@@ -692,7 +741,6 @@ const ManageOnboarding: React.FC = () => {
         </section>
       )}
 
-
       <section className="card card-content">
         <div className="questions-header">
           <h2 className="questions-title">Questions List</h2>
@@ -701,7 +749,6 @@ const ManageOnboarding: React.FC = () => {
           </span>
         </div>
         <p className="questions-hint">💡 Drag and drop questions to reorder them</p>
-
 
         <div className="questions-list">
           {loading ? (
@@ -767,6 +814,5 @@ const ManageOnboarding: React.FC = () => {
     </div>
   );
 };
-
 
 export default ManageOnboarding;
